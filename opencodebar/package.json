@@ -7,10 +7,6 @@
   "exports": {
     "./tui": "./dist/tui.js"
   },
-  "files": [
-    "dist",
-    "README.md"
-  ],
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
