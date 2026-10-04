@@ -158,6 +158,29 @@ describe("rollupFamily", () => {
     expect(report.total).toBeCloseTo(FULL_COST, 10)
   })
 
+  it("aggregates family-wide token totals across root and subagents", () => {
+    const report = rollupFamily(
+      [
+        {
+          sessionID: "root",
+          usages: [usage("anthropic", "claude-sonnet-4-5", { input: 100, output: 50, reasoning: 20, cache: { read: 500, write: 60 } })],
+        },
+        {
+          sessionID: "sub-1",
+          usages: [usage("openai", "gpt-5-mini", { input: 30, output: 15, reasoning: 5, cache: { read: 90, write: 0 } })],
+        },
+      ],
+      "root",
+      lookup,
+    )
+    expect(report.tokens).toEqual({
+      input: 130,
+      output: 65,
+      reasoning: 25,
+      cache: { read: 590, write: 60 },
+    })
+  })
+
   it("ignores usages from sessions outside the family list and unknown roots", () => {
     const report = rollupFamily(
       [

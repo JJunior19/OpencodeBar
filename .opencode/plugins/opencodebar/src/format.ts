@@ -47,8 +47,8 @@ export function billedOutput(tokens: TokenUsage): number {
   return tokens.output + tokens.reasoning
 }
 
-/** Token detail line, e.g. `in 1.2M · out 340k · cache 8.1M`. */
+/** Token detail line with icons, e.g. `↓ 1.2M · ↑ 340k · ↺ 8.1M`. */
 export function tokenDetail(tokens: TokenUsage): string {
   const cache = tokens.cache.read + tokens.cache.write
-  return `in ${formatTokens(tokens.input)} · out ${formatTokens(billedOutput(tokens))} · cache ${formatTokens(cache)}`
+  return `↓ ${formatTokens(tokens.input)} · ↑ ${formatTokens(billedOutput(tokens))} · ↺ ${formatTokens(cache)}`
 }

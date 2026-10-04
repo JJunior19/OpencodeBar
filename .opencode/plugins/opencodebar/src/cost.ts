@@ -126,6 +126,8 @@ export interface FamilyReport {
   readonly total: number
   /** Per-model breakdown merged across the whole family. */
   readonly models: readonly ModelUsage[]
+  /** Family-wide token totals (root + subagents). */
+  readonly tokens: TokenUsage
   readonly subagents: {
     /** Number of non-root sessions in the family. */
     readonly count: number
@@ -145,11 +147,13 @@ export function rollupFamily(sessions: readonly SessionUsage[], rootID: string, 
   let total = 0
   let subagentCount = 0
   let subagentTotal = 0
+  let tokens = emptyUsage()
   const all: UsageInput[] = []
   for (const session of sessions) {
     let sessionTotal = 0
     for (const usage of session.usages) {
       all.push(usage)
+      tokens = addUsage(tokens, usage.tokens)
       const entry = lookup(usage.model.providerID, usage.model.id)
       sessionTotal += computeTokenCost(usage.tokens, entry)
     }
@@ -163,6 +167,7 @@ export function rollupFamily(sessions: readonly SessionUsage[], rootID: string, 
   return {
     total,
     models,
+    tokens,
     subagents: { count: subagentCount, total: subagentTotal },
     unmatchedModels: models.filter((row) => !row.matched).length,
   }

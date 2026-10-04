@@ -9,12 +9,13 @@
  * Layout contract (compact, sidebar-safe, ~34 columns):
  *   ── Cost · API est. ─────────────
  *   Session              $12.3456
+ *    ↓ 250k · ↑ 60k · ↺ 9.5M
  *     glm-5.3            ▇▇▇▇▇ $9.8765
- *      in 1.2M · out 340k · cache 8.1M
+ *      ↓ 1.2M · ↑ 340k · ↺ 8.1M
  *     claude-sonnet-4-5  ▇     $2.4691
- *      in 210k · out 96k · cache 1.4M
+ *      ↓ 210k · ↑ 96k · ↺ 1.4M
  *     custom-model             no price
- *      in 12k · out 3k · cache 40k
+ *      ↓ 12k · ↑ 3k · ↺ 40k
  *   Subagents (2)         $1.2340
  *   Project · 7d           $45.67
  *   38 sessions · litellm · 2m ago
@@ -107,6 +108,7 @@ export function CostPanel(props: {
       <box>
         <text fg={props.theme.text}>{sectionHeader("Cost · API est.", rowLabelWidth() + VALUE_WIDTH)}</text>
         <text fg={props.theme.text}>{panelRow("Session", formatUSD(report().total, 4), rowLabelWidth())}</text>
+        <text fg={props.theme.muted}>{`${" ".repeat(DETENT + 1)}${tokenDetail(report().tokens)}`}</text>
         <For each={report().models}>
           {(model) => {
             const name = shortModelName(model.modelID)

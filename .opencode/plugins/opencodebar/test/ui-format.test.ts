@@ -47,8 +47,8 @@ describe("token helpers", () => {
     expect(billedOutput({ input: 0, output: 100, reasoning: 40, cache: { read: 0, write: 0 } })).toBe(140)
   })
 
-  it("renders an in/out/cache detail line", () => {
+  it("renders an icon token detail line", () => {
     const line = tokenDetail({ input: 1_200_000, output: 340_000, reasoning: 0, cache: { read: 8_100_000, write: 10_000 } })
-    expect(line).toBe("in 1.2M · out 340k · cache 8.1M")
+    expect(line).toBe("↓ 1.2M · ↑ 340k · ↺ 8.1M")
   })
 })
