@@ -8,7 +8,6 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { createSignal } from "solid-js"
 import {
-  PROJECT_WINDOW_MS,
   computeTokenCost,
   formatAge,
   isInProjectWindow,
@@ -35,7 +34,7 @@ interface PriceCache {
 }
 
 interface ProjectCache {
-  projectID: string
+  directory: string
   computedAt: number
   dirty: boolean
   total: number
@@ -165,33 +164,19 @@ export default Plugin.define({
     let projectCache: ProjectCache | undefined
     let projectCompute: Promise<void> | undefined
 
-    async function computeProjectTotalFromStats(projectID: string): Promise<{ total: number; sessions: number } | undefined> {
-      try {
-        const stats = await context.client.session.stats({
-          project: projectID,
-          from: Date.now() - PROJECT_WINDOW_MS,
-        })
-        if (stats.models.length === 0) return undefined
-        let total = 0
-        for (const model of stats.models) {
-          total += computeTokenCost(model.tokens, lookup(model.model.providerID, model.model.id))
-        }
-        // `sessions` counts roots only; the total also covers subagent sessions.
-        return { total, sessions: stats.sessions + stats.subagents }
-      } catch {
-        return undefined
-      }
-    }
-
-    /** Prescribed fallback: paginate newest-first, then fetch messages with bounded concurrency. */
-    async function computeProjectTotalFromSessions(projectID: string): Promise<{ total: number; sessions: number }> {
+    // Group the project total by DIRECTORY, not projectID: OpenCode can assign
+    // different projectIDs to sessions in the same directory (project
+    // re-detection), which fragments the total across two IDs. The directory is
+    // the stable grouping key. `session.stats` only filters by project, so we
+    // paginate sessions by directory and sum their messages instead.
+    async function computeProjectTotalForDirectory(directory: string): Promise<{ total: number; sessions: number }> {
       const now = Date.now()
       const sessionIDs: string[] = []
       let cursor: string | undefined
       let stop = false
       while (!stop) {
         const page = await context.client.session.list({
-          project: projectID,
+          directory,
           order: "desc",
           limit: PROJECT_PAGE_LIMIT,
           cursor,
@@ -229,20 +214,16 @@ export default Plugin.define({
       return { total, sessions: sessionIDs.length }
     }
 
-    async function computeProjectTotal(projectID: string): Promise<{ total: number; sessions: number }> {
-      return (await computeProjectTotalFromStats(projectID)) ?? (await computeProjectTotalFromSessions(projectID))
-    }
-
-    function ensureProjectTotal(projectID: string): void {
+    function ensureProjectTotal(directory: string): void {
       const cached = projectCache
       const now = Date.now()
-      if (cached !== undefined && cached.projectID === projectID && !cached.dirty && now - cached.computedAt < PROJECT_TTL_MS) {
+      if (cached !== undefined && cached.directory === directory && !cached.dirty && now - cached.computedAt < PROJECT_TTL_MS) {
         return
       }
       if (projectCompute === undefined) {
-        projectCompute = computeProjectTotal(projectID)
+        projectCompute = computeProjectTotalForDirectory(directory)
           .then((result) => {
-            projectCache = { projectID, computedAt: Date.now(), dirty: false, total: result.total, sessions: result.sessions }
+            projectCache = { directory, computedAt: Date.now(), dirty: false, total: result.total, sessions: result.sessions }
             bump()
           })
           .catch(() => {})
@@ -251,12 +232,14 @@ export default Plugin.define({
     }
 
     function projectTotal(sessionID: string): ProjectTotalView {
-      // The TUI location has no project ID in v2; follow the selected session.
+      // Group by the session's directory: projectID can fragment across
+      // re-detection, while the directory is stable.
       const session = context.data.session.get(sessionID)
       if (session === undefined) return { state: "loading", total: 0, sessionCount: 0 }
-      ensureProjectTotal(session.projectID)
+      const directory = session.location.directory
+      ensureProjectTotal(directory)
       const cached = projectCache
-      if (cached !== undefined && cached.projectID === session.projectID) {
+      if (cached !== undefined && cached.directory === directory) {
         return { state: "ok", total: cached.total, sessionCount: cached.sessions }
       }
       return { state: "loading", total: 0, sessionCount: 0 }

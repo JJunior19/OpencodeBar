@@ -478,31 +478,14 @@ var tui_default = Plugin.define({
     }
     let projectCache;
     let projectCompute;
-    async function computeProjectTotalFromStats(projectID) {
-      try {
-        const stats = await context.client.session.stats({
-          project: projectID,
-          from: Date.now() - PROJECT_WINDOW_MS
-        });
-        if (stats.models.length === 0)
-          return;
-        let total = 0;
-        for (const model of stats.models) {
-          total += computeTokenCost(model.tokens, lookup(model.model.providerID, model.model.id));
-        }
-        return { total, sessions: stats.sessions + stats.subagents };
-      } catch {
-        return;
-      }
-    }
-    async function computeProjectTotalFromSessions(projectID) {
+    async function computeProjectTotalForDirectory(directory) {
       const now = Date.now();
       const sessionIDs = [];
       let cursor;
       let stop = false;
       while (!stop) {
         const page = await context.client.session.list({
-          project: projectID,
+          directory,
           order: "desc",
           limit: PROJECT_PAGE_LIMIT,
           cursor
@@ -536,18 +519,15 @@ var tui_default = Plugin.define({
       await Promise.all(workers);
       return { total, sessions: sessionIDs.length };
     }
-    async function computeProjectTotal(projectID) {
-      return await computeProjectTotalFromStats(projectID) ?? await computeProjectTotalFromSessions(projectID);
-    }
-    function ensureProjectTotal(projectID) {
+    function ensureProjectTotal(directory) {
       const cached = projectCache;
       const now = Date.now();
-      if (cached !== undefined && cached.projectID === projectID && !cached.dirty && now - cached.computedAt < PROJECT_TTL_MS) {
+      if (cached !== undefined && cached.directory === directory && !cached.dirty && now - cached.computedAt < PROJECT_TTL_MS) {
         return;
       }
       if (projectCompute === undefined) {
-        projectCompute = computeProjectTotal(projectID).then((result) => {
-          projectCache = { projectID, computedAt: Date.now(), dirty: false, total: result.total, sessions: result.sessions };
+        projectCompute = computeProjectTotalForDirectory(directory).then((result) => {
+          projectCache = { directory, computedAt: Date.now(), dirty: false, total: result.total, sessions: result.sessions };
           bump();
         }).catch(() => {}).finally(() => projectCompute = undefined);
       }
@@ -556,9 +536,10 @@ var tui_default = Plugin.define({
       const session = context.data.session.get(sessionID);
       if (session === undefined)
         return { state: "loading", total: 0, sessionCount: 0 };
-      ensureProjectTotal(session.projectID);
+      const directory = session.location.directory;
+      ensureProjectTotal(directory);
       const cached = projectCache;
-      if (cached !== undefined && cached.projectID === session.projectID) {
+      if (cached !== undefined && cached.directory === directory) {
         return { state: "ok", total: cached.total, sessionCount: cached.sessions };
       }
       return { state: "loading", total: 0, sessionCount: 0 };
