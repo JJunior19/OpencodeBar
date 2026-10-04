@@ -12,11 +12,7 @@
  *    ↓ 250k · ↑ 60k · ↺ 9.5M
  *     glm-5.3            ▇▇▇▇▇ $9.8765
  *      ↓ 1.2M · ↑ 340k · ↺ 8.1M
- *     claude-sonnet-4-5  ▇     $2.4691
- *      ↓ 210k · ↑ 96k · ↺ 1.4M
- *     custom-model             no price
- *      ↓ 12k · ↑ 3k · ↺ 40k
- *   Subagents (2)         $1.2340
+ *    · subagents (2): $0.4320
  *   Project · 7d           $45.67
  *   38 sessions · litellm · 2m ago
  */
@@ -96,8 +92,7 @@ export function CostPanel(props: {
   })
 
   const rowLabelWidth = createMemo(() => {
-    const subagentLabel = report().subagents.count > 0 ? `Subagents (${report().subagents.count})`.length : 0
-    return Math.max("Project · 7d".length, subagentLabel, DETENT + nameWidth())
+    return Math.max("Project · 7d".length, DETENT + nameWidth())
   })
 
   const barContenders = createMemo(() => report().models.filter((model) => model.matched && model.usd > 0).length)
@@ -133,8 +128,8 @@ export function CostPanel(props: {
           }}
         </For>
         <Show when={report().subagents.count > 0}>
-          <text fg={props.theme.text}>
-            {panelRow(`Subagents (${report().subagents.count})`, formatUSD(report().subagents.total, 4), rowLabelWidth())}
+          <text fg={props.theme.muted}>
+            {`${" ".repeat(DETENT)}· subagents (${report().subagents.count}): ${formatUSD(report().subagents.total, 4)}`}
           </text>
         </Show>
         <text fg={props.theme.text}>

@@ -176,7 +176,8 @@ export default Plugin.define({
         for (const model of stats.models) {
           total += computeTokenCost(model.tokens, lookup(model.model.providerID, model.model.id))
         }
-        return { total, sessions: stats.sessions }
+        // `sessions` counts roots only; the total also covers subagent sessions.
+        return { total, sessions: stats.sessions + stats.subagents }
       } catch {
         return undefined
       }

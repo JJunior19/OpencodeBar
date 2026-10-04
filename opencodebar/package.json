@@ -5,11 +5,16 @@
   "type": "module",
   "license": "MIT",
   "exports": {
-    "./tui": "./src/tui.tsx"
+    "./tui": "./dist/tui.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "bun build src/tui.tsx --outdir dist --external @opencode/plugin/tui --external solid-js --external @opentui/solid --external @opentui/core"
   },
   "dependencies": {
     "@opencode/plugin": "latest"
