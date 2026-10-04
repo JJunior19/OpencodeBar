@@ -24,6 +24,7 @@ const PRICE_REFRESH_MS = 24 * 60 * 60 * 1000
 const FETCH_TIMEOUT_MS = 10_000
 const PROJECT_TTL_MS = 60_000
 const PANEL_TICK_MS = 30_000
+const FAMILY_REFRESH_MS = 5_000
 const PROJECT_PAGE_LIMIT = 50
 const PROJECT_FETCH_CONCURRENCY = 4
 
@@ -114,20 +115,17 @@ export default Plugin.define({
 
     // ----- selected-session family report -----
 
-    const syncedSessions = new Set<string>()
+    // `data.session.message.list` is page-limited, so it under-counts sessions
+    // whose transcript spans more than one page. `client.session.context`
+    // returns the full transcript (verified: it paginates internally). We fetch
+    // it async, cache per session, and refresh on usage events and on the tick,
+    // guarded by a minimum refresh interval so streaming does not storm.
+    const familyUsages = new Map<string, { usages: UsageInput[]; fetchedAt: number }>()
+    const familyInflight = new Set<string>()
+    let viewedSessionID = ""
 
-    function collectUsages(sessionID: string): UsageInput[] {
-      const messages = context.data.session.message.list(sessionID)
-      if (messages.length === 0 && !syncedSessions.has(sessionID)) {
-        // First sighting of a family member (often a subagent): pull its
-        // messages, then bump so the panel recomputes. Bounded: once per
-        // session per plugin lifetime.
-        syncedSessions.add(sessionID)
-        void context.data.session.message
-          .sync(sessionID)
-          .then(() => bump())
-          .catch(() => {})
-      }
+    async function fetchUsages(sessionID: string): Promise<void> {
+      const messages = await context.client.session.context({ sessionID })
       const usages: UsageInput[] = []
       for (const message of messages) {
         if (message.type !== "assistant" || message.tokens === undefined) continue
@@ -136,14 +134,27 @@ export default Plugin.define({
           tokens: message.tokens,
         })
       }
-      return usages
+      familyUsages.set(sessionID, { usages, fetchedAt: Date.now() })
+      bump()
+    }
+
+    function scheduleUsages(sessionID: string): void {
+      const entry = familyUsages.get(sessionID)
+      if (entry !== undefined && Date.now() - entry.fetchedAt < FAMILY_REFRESH_MS) return
+      if (familyInflight.has(sessionID)) return
+      familyInflight.add(sessionID)
+      void fetchUsages(sessionID)
+        .catch(() => {})
+        .finally(() => familyInflight.delete(sessionID))
     }
 
     function sessionReport(sessionID: string) {
+      viewedSessionID = sessionID
       const rootID = context.data.session.root(sessionID)
       const family = context.data.session.family(sessionID)
+      for (const id of family) scheduleUsages(id)
       return rollupFamily(
-        family.map((id) => ({ sessionID: id, usages: collectUsages(id) })),
+        family.map((id) => ({ sessionID: id, usages: familyUsages.get(id)?.usages ?? [] })),
         rootID,
         lookup,
       )
@@ -256,6 +267,9 @@ export default Plugin.define({
       context.data.on("session.usage.updated", () => {
         // Covers model turns and auxiliary generation: the aggregate moves.
         if (projectCache !== undefined) projectCache.dirty = true
+        if (viewedSessionID !== "") {
+          for (const id of context.data.session.family(viewedSessionID)) scheduleUsages(id)
+        }
         bump()
       }),
       context.data.on("session.deleted", () => bump()),
@@ -263,6 +277,9 @@ export default Plugin.define({
 
     const tick = setInterval(() => {
       ensurePrices()
+      if (viewedSessionID !== "") {
+        for (const id of context.data.session.family(viewedSessionID)) scheduleUsages(id)
+      }
       bump()
     }, PANEL_TICK_MS)
 
