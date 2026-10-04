@@ -150,7 +150,10 @@ function suffixMatch(table: PriceTable, modelID: string): PriceEntry | undefined
     const prefix = key.slice(0, key.length - modelID.length - 1)
     if (VENDOR_PREFIXES.has(prefix)) return get(table, key)
   }
-  if (candidates.length === 1) return get(table, candidates[0])
+  if (candidates.length === 1) {
+    const only = candidates[0]
+    if (only !== undefined) return get(table, only)
+  }
   return undefined
 }
 
