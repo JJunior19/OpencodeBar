@@ -3,11 +3,37 @@
  *
  * Presentation only: no OpenCode imports, no I/O. The TUI plugin (./tui)
  * supplies a PanelController whose methods read reactive state; every
- * component below recomputes when the controller's signals change.
+ * component below recomputes when the controller's signals change. String
+ * builders live in ./format (JSX-free, unit-tested).
+ *
+ * Layout contract (compact, sidebar-safe, ~34 columns):
+ *   ── Cost · API est. ─────────────
+ *   Session              $12.3456
+ *     glm-5.3            ▇▇▇▇▇ $9.8765
+ *      in 1.2M · out 340k · cache 8.1M
+ *     claude-sonnet-4-5  ▇     $2.4691
+ *      in 210k · out 96k · cache 1.4M
+ *     custom-model             no price
+ *      in 12k · out 3k · cache 40k
+ *   Subagents (2)         $1.2340
+ *   Project · 7d           $45.67
+ *   38 sessions · litellm · 2m ago
  */
 import type { RGBA } from "@opentui/core"
 import { For, Show, createMemo } from "solid-js"
-import { formatTokens, formatUSD, type FamilyReport, type ModelUsage } from "./cost"
+import { formatUSD, type FamilyReport, type ModelUsage } from "./cost"
+import {
+  BAR_WIDTH,
+  DETENT,
+  NAME_MAX,
+  NAME_MIN,
+  VALUE_WIDTH,
+  fitLabel,
+  panelRow,
+  sectionHeader,
+  shareBar,
+  tokenDetail,
+} from "./format"
 
 export interface PriceStatusView {
   readonly state: "loading" | "ok" | "error" | "unavailable"
@@ -44,10 +70,6 @@ function shortModelName(modelID: string): string {
   return slash === -1 ? modelID : modelID.slice(slash + 1)
 }
 
-function totalTokens(model: ModelUsage): number {
-  return model.tokens.input + model.tokens.output + model.tokens.reasoning + model.tokens.cache.read + model.tokens.cache.write
-}
-
 export function CostPanel(props: {
   sessionID: string
   ctrl: PanelController
@@ -67,32 +89,64 @@ export function CostPanel(props: {
 
   const prices = createMemo(() => props.ctrl.priceStatus())
 
-  const modelColumnWidth = createMemo(() =>
-    Math.max(...report().models.map((model) => shortModelName(model.modelID).length), 0),
-  )
+  const nameWidth = createMemo(() => {
+    const longest = report().models.reduce((max, model) => Math.max(max, shortModelName(model.modelID).length), 0)
+    return Math.min(NAME_MAX, Math.max(NAME_MIN, longest))
+  })
+
+  const rowLabelWidth = createMemo(() => {
+    const subagentLabel = report().subagents.count > 0 ? `Subagents (${report().subagents.count})`.length : 0
+    return Math.max("Project · 7d".length, subagentLabel, DETENT + nameWidth())
+  })
+
+  const barContenders = createMemo(() => report().models.filter((model) => model.matched && model.usd > 0).length)
+  const maxModelUsd = createMemo(() => report().models.reduce((max, model) => Math.max(max, model.usd), 0))
 
   return (
     <Show when={props.sessionID !== ""}>
       <box>
-        <text fg={props.theme.text}>{`Session (API est.): ${formatUSD(report().total, 4)}`}</text>
+        <text fg={props.theme.text}>{sectionHeader("Cost · API est.", rowLabelWidth() + VALUE_WIDTH)}</text>
+        <text fg={props.theme.text}>{panelRow("Session", formatUSD(report().total, 4), rowLabelWidth())}</text>
         <For each={report().models}>
-          {(model) => (
-            <text fg={props.theme.muted}>
-              {model.matched
-                ? `  ${shortModelName(model.modelID).padEnd(modelColumnWidth())}  ${formatUSD(model.usd, 4)}`
-                : `  ${shortModelName(model.modelID).padEnd(modelColumnWidth())}  no price (${formatTokens(totalTokens(model))} tok)`}
-            </text>
-          )}
+          {(model) => {
+            const name = shortModelName(model.modelID)
+            const bar = shareBar(model.usd, maxModelUsd(), barContenders()).padEnd(BAR_WIDTH)
+            return (
+              <box>
+                <Show
+                  when={model.matched}
+                  fallback={
+                    <text fg={props.theme.warning}>
+                      {`${" ".repeat(DETENT)}${fitLabel(name, nameWidth())}${bar}${"no price".padStart(VALUE_WIDTH)}`}
+                    </text>
+                  }
+                >
+                  <text fg={props.theme.muted}>
+                    {`${" ".repeat(DETENT)}${fitLabel(name, nameWidth())}${bar}${formatUSD(model.usd, 4).padStart(VALUE_WIDTH)}`}
+                  </text>
+                </Show>
+                <text fg={props.theme.muted}>{`${" ".repeat(DETENT + 1)}${tokenDetail(model.tokens)}`}</text>
+              </box>
+            )
+          }}
         </For>
         <Show when={report().subagents.count > 0}>
-          <text fg={props.theme.text}>{`Subagents (${report().subagents.count}): ${formatUSD(report().subagents.total, 4)}`}</text>
+          <text fg={props.theme.text}>
+            {panelRow(`Subagents (${report().subagents.count})`, formatUSD(report().subagents.total, 4), rowLabelWidth())}
+          </text>
         </Show>
         <text fg={props.theme.text}>
-          {`Project (7d): ${project().state === "ok" ? formatUSD(project().total, 2) : "..."}`}
+          {panelRow("Project · 7d", project().state === "ok" ? formatUSD(project().total, 2) : "…", rowLabelWidth())}
         </text>
         <Show
           when={prices().state === "error" || prices().state === "unavailable"}
-          fallback={<text fg={props.theme.muted}>{prices().label}</text>}
+          fallback={
+            <text fg={props.theme.muted}>
+              {project().state === "ok" && project().sessionCount > 0
+                ? `${project().sessionCount} sessions · ${prices().label}`
+                : prices().label}
+            </text>
+          }
         >
           <text fg={props.theme.warning}>{prices().label}</text>
         </Show>
