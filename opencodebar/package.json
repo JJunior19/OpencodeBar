@@ -4,13 +4,30 @@
   "description": "API-equivalent cost tracking for OpenCode sessions, powered by LiteLLM list prices.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JJunior19/OpencodeBar.git"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "cost",
+    "llm",
+    "litellm",
+    "tokens"
+  ],
   "exports": {
     "./tui": "./dist/tui.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "bun build src/tui.tsx --outdir dist --external @opencode/plugin/tui --external solid-js --external @opentui/solid --external @opentui/core"
+    "build": "bun build src/tui.tsx --outdir dist --external @opencode/plugin/tui --external solid-js --external @opentui/solid --external @opentui/core",
+    "prepublishOnly": "npm run build && npm run typecheck && npm test"
   },
   "dependencies": {
     "@opencode/plugin": "latest"
