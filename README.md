@@ -19,37 +19,36 @@ subagent, and per project.
 
 ## Install (global — all projects)
 
-1. Clone this repository:
-
-   ```sh
-   git clone https://github.com/JJunior19/OpencodeBar.git ~/OpencodeBar
-   ```
-
-2. Symlink the plugin package into OpenCode's global plugins directory:
-
-   ```sh
-   ln -sfn ~/OpencodeBar/opencodebar ~/.config/opencode/plugins/opencodebar
-   ```
-
-3. Restart the OpenCode TUI. The sidebar shows a `Cost · API est.` panel in
-   every project.
-
-That's it. OpenCode discovers the plugin by the filename `tui.ts` inside the
-plugin directory — opencodebar is a TUI-only plugin, there is no server entry.
-
-### Install in a single project (optional)
-
-Copy or symlink the package into that project instead:
+### Via symlink (current)
 
 ```sh
-ln -sfn ~/OpencodeBar/opencodebar <project>/.opencode/plugins/opencodebar
+git clone https://github.com/JJunior19/OpencodeBar.git ~/OpencodeBar
+ln -sfn ~/OpencodeBar/opencodebar ~/.config/opencode/plugins/opencodebar
 ```
+
+Restart the TUI. The sidebar shows a `Cost · API est.` panel in every project.
+Live-updates on `git pull` + TUI restart.
+
+### Via `opencode plugin add` (npm / Git)
+
+The plugin currently ships raw `.tsx` (JSX). OpenCode's Solid JSX transform
+skips files under `node_modules/` (the managed plugin cache), so a package
+install falls back to the React runtime and fails to load. Once the plugin is
+pre-built to JavaScript (`.tsx` → `.js`), it installs with:
+
+```sh
+opencode plugin add opencodebar                                       # once published to npm
+opencode plugin add 'github:JJunior19/OpencodeBar#feat/cost-tracker-plugin::path:opencodebar'
+```
+
+> **Note:** OpenCode plugins do **not** install with `npm install -g` or
+> `pnpm add -g`. Use `opencode plugin add`, which accepts npm packages and Git
+> specs (including `::path:` subdirectory selectors).
 
 ## Update
 
 ```sh
-cd ~/OpencodeBar && git pull
-# restart the TUI
+cd ~/OpencodeBar && git pull   # then restart the TUI
 ```
 
 ## Uninstall
