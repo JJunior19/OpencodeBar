@@ -92,7 +92,7 @@ are provided by the OpenCode host at runtime. After publishing,
   trimmed to `input_cost_per_token`, `output_cost_per_token`,
   `cache_read_input_token_cost`, `cache_creation_input_token_cost`
   (USD per single token; missing tiers count as 0 and are flagged unknown).
-  Stored in durable plugin storage under `opencodebar/prices`, refreshed at
+  Stored in durable plugin storage under `prices`, refreshed at
   most once per 24h with a 10s timeout; on failure the stale table is kept
   and its age is surfaced in the footer.
 - **Model matching** (deterministic, first hit wins): exact

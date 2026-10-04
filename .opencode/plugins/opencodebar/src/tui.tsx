@@ -46,7 +46,7 @@ export default Plugin.define({
   setup(context) {
     // ----- price cache (durable, 24h refresh, stale kept on failure) -----
 
-    const [prices, updatePrices] = context.storage.store("opencodebar/prices", {
+    const [prices, updatePrices] = context.storage.store("prices", {
       initial: { fetchedAt: 0, entries: {}, error: "" } as PriceCache,
     })
     let priceFetch: Promise<boolean> | undefined
