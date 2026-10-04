@@ -178,6 +178,31 @@ export const PROJECT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 /** Safety cap on sessions scanned for the project total. */
 export const PROJECT_SESSION_CAP = 200
 
+/**
+ * Directories whose sessions make up the project total: every directory the
+ * server reports for the project (repo root plus git worktrees) unioned with
+ * the session's own directory, deduped, order-stable.
+ *
+ * The session's directory is ALWAYS part of the set: a freshly created
+ * worktree may not be reported by the server yet, and an empty or failed
+ * worktree listing must degrade to the pre-worktree single-directory
+ * behavior, never to an empty scan.
+ */
+export function resolveProjectDirectories(
+  worktreeDirectories: readonly string[],
+  sessionDirectory: string,
+): string[] {
+  const directories: string[] = []
+  const seen = new Set<string>()
+  for (const directory of [...worktreeDirectories, sessionDirectory]) {
+    if (directory === "" || seen.has(directory)) continue
+    seen.add(directory)
+    directories.push(directory)
+  }
+  return directories
+}
+
+
 export function isInProjectWindow(createdMs: number, nowMs: number, windowMs: number = PROJECT_WINDOW_MS): boolean {
   return Number.isFinite(createdMs) && createdMs >= nowMs - windowMs
 }

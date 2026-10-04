@@ -11,6 +11,7 @@ import {
   computeTokenCost,
   formatAge,
   isInProjectWindow,
+  resolveProjectDirectories,
   rollupFamily,
   shouldStopProjectPagination,
   type UsageInput,
@@ -31,14 +32,6 @@ interface PriceCache {
   fetchedAt: number
   entries: Record<string, PriceEntry>
   error: string
-}
-
-interface ProjectCache {
-  directory: string
-  computedAt: number
-  dirty: boolean
-  total: number
-  sessions: number
 }
 
 export default Plugin.define({
@@ -161,35 +154,93 @@ export default Plugin.define({
 
     // ----- 7-day project total (60s TTL, invalidated by usage events) -----
 
+    // The total spans the WHOLE project: repo root plus every git worktree.
+    // Sessions are still grouped by DIRECTORY, not projectID: OpenCode can
+    // assign different projectIDs to sessions in the same directory (project
+    // re-detection), which fragments the total across two IDs. So we resolve
+    // every directory the project reports via `worktree.list` (root +
+    // worktrees of the same repo) and paginate sessions per directory. The
+    // session's own directory is always kept in the set (see
+    // resolveProjectDirectories): a fresh worktree may not be reported yet,
+    // and a failed listing degrades to the pre-worktree single-directory scan.
+    interface DirectoryCache {
+      projectID: string
+      fetchedAt: number
+      directories: readonly string[]
+    }
+
+    let directoryCache: DirectoryCache | undefined
+    let directoryFetch: { projectID: string; promise: Promise<readonly string[]> } | undefined
+
+    const PROJECT_DIRECTORY_TTL_MS = 60_000
+
+    async function fetchProjectDirectories(projectID: string, sessionDirectory: string): Promise<readonly string[]> {
+      let reported: readonly string[] = []
+      try {
+        const entries = await context.client.worktree.list({ projectID })
+        reported = entries.map((entry) => entry.directory)
+      } catch {
+        // An unreachable worktree inventory must not sink the total.
+      }
+      return resolveProjectDirectories(reported, sessionDirectory)
+    }
+
+    function resolveDirectories(projectID: string, sessionDirectory: string): Promise<readonly string[]> {
+      const cached = directoryCache
+      if (cached !== undefined && cached.projectID === projectID && Date.now() - cached.fetchedAt < PROJECT_DIRECTORY_TTL_MS) {
+        return Promise.resolve(cached.directories)
+      }
+      if (directoryFetch?.projectID === projectID) return directoryFetch.promise
+      const promise = fetchProjectDirectories(projectID, sessionDirectory)
+        .then((directories) => {
+          directoryCache = { projectID, fetchedAt: Date.now(), directories }
+          return directories
+        })
+        .finally(() => {
+          if (directoryFetch?.promise === promise) directoryFetch = undefined
+        })
+      directoryFetch = { projectID, promise }
+      return promise
+    }
+
+    interface ProjectCache {
+      projectID: string
+      computedAt: number
+      dirty: boolean
+      total: number
+      sessions: number
+    }
+
     let projectCache: ProjectCache | undefined
     let projectCompute: Promise<void> | undefined
 
-    // Group the project total by DIRECTORY, not projectID: OpenCode can assign
-    // different projectIDs to sessions in the same directory (project
-    // re-detection), which fragments the total across two IDs. The directory is
-    // the stable grouping key. `session.stats` only filters by project, so we
-    // paginate sessions by directory and sum their messages instead.
-    async function computeProjectTotalForDirectory(directory: string): Promise<{ total: number; sessions: number }> {
+    async function computeProjectTotal(directories: readonly string[]): Promise<{ total: number; sessions: number }> {
       const now = Date.now()
       const sessionIDs: string[] = []
-      let cursor: string | undefined
-      let stop = false
-      while (!stop) {
-        const page = await context.client.session.list({
-          directory,
-          order: "desc",
-          limit: PROJECT_PAGE_LIMIT,
-          cursor,
-        })
-        for (const session of page.data) {
-          if (shouldStopProjectPagination(session.time.created, now, sessionIDs.length)) {
-            stop = true
-            break
+      const seen = new Set<string>()
+      for (const directory of directories) {
+        let cursor: string | undefined
+        let stop = false
+        while (!stop) {
+          const page = await context.client.session.list({
+            directory,
+            order: "desc",
+            limit: PROJECT_PAGE_LIMIT,
+            cursor,
+          })
+          for (const session of page.data) {
+            if (shouldStopProjectPagination(session.time.created, now, sessionIDs.length)) {
+              stop = true
+              break
+            }
+            if (isInProjectWindow(session.time.created, now) && !seen.has(session.id)) {
+              seen.add(session.id)
+              sessionIDs.push(session.id)
+            }
           }
-          if (isInProjectWindow(session.time.created, now)) sessionIDs.push(session.id)
+          cursor = page.cursor.next ?? undefined
+          if (cursor === undefined || stop) break
         }
-        cursor = page.cursor.next ?? undefined
-        if (cursor === undefined || stop) break
       }
 
       let total = 0
@@ -214,16 +265,17 @@ export default Plugin.define({
       return { total, sessions: sessionIDs.length }
     }
 
-    function ensureProjectTotal(directory: string): void {
+    function ensureProjectTotal(projectID: string, sessionDirectory: string): void {
       const cached = projectCache
       const now = Date.now()
-      if (cached !== undefined && cached.directory === directory && !cached.dirty && now - cached.computedAt < PROJECT_TTL_MS) {
+      if (cached !== undefined && cached.projectID === projectID && !cached.dirty && now - cached.computedAt < PROJECT_TTL_MS) {
         return
       }
       if (projectCompute === undefined) {
-        projectCompute = computeProjectTotalForDirectory(directory)
+        projectCompute = resolveDirectories(projectID, sessionDirectory)
+          .then((directories) => computeProjectTotal(directories))
           .then((result) => {
-            projectCache = { directory, computedAt: Date.now(), dirty: false, total: result.total, sessions: result.sessions }
+            projectCache = { projectID, computedAt: Date.now(), dirty: false, total: result.total, sessions: result.sessions }
             bump()
           })
           .catch(() => {})
@@ -232,20 +284,27 @@ export default Plugin.define({
     }
 
     function projectTotal(sessionID: string): ProjectTotalView {
-      // Group by the session's directory: projectID can fragment across
-      // re-detection, while the directory is stable.
+      // Key by the session's project (root + worktrees share one projectID)
+      // and keep the directory as the pagination filter and safety net.
       const session = context.data.session.get(sessionID)
       if (session === undefined) return { state: "loading", total: 0, sessionCount: 0 }
-      const directory = session.location.directory
-      ensureProjectTotal(directory)
+      ensureProjectTotal(session.projectID, session.location.directory)
       const cached = projectCache
-      if (cached !== undefined && cached.directory === directory) {
+      if (cached !== undefined && cached.projectID === session.projectID) {
         return { state: "ok", total: cached.total, sessionCount: cached.sessions }
       }
       return { state: "loading", total: 0, sessionCount: 0 }
     }
 
     // ----- events, tick, slash command, slot -----
+
+    // A created/removed/resolved worktree changes the directory set behind
+    // the project total: drop the directory cache and force a recompute.
+    function invalidateWorktrees(): void {
+      directoryCache = undefined
+      if (projectCache !== undefined) projectCache.dirty = true
+      bump()
+    }
 
     const stops: Array<() => void> = [
       context.data.on("session.usage.updated", () => {
@@ -257,6 +316,8 @@ export default Plugin.define({
         bump()
       }),
       context.data.on("session.deleted", () => bump()),
+      context.data.on("worktree.updated", invalidateWorktrees),
+      context.data.on("worktree.resolved", invalidateWorktrees),
     ]
 
     const tick = setInterval(() => {
