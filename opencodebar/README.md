@@ -70,9 +70,21 @@ package lives in the `opencodebar/` subdirectory). See publish notes below.
 
 ### Publish notes
 
-`npm publish` ships TypeScript sources (per OpenCode plugin convention — the
-host loads `./tui` for the CLI plugin). Peer dependencies (`@opentui/core`,
-`@opentui/solid`, `solid-js`) are provided by the OpenCode host at runtime.
+`npm publish` ships the prebuilt bundle (`dist/tui.js`, produced by
+`npm run build`) — the host loads the package's `./tui` export for the CLI
+plugin.
+
+Peer dependencies (`@opentui/core`, `@opentui/solid`, `solid-js`) are marked
+**optional** in `peerDependenciesMeta`, and they must stay optional: the
+OpenCode host provides these modules at runtime by resolving bare imports to
+its own internal copies when the plugin's install tree does not contain them.
+If npm auto-installs them (any non-optional peer is auto-installed by npm 7+),
+the managed install grows its own physical Solid copies. Two Solid instances
+means two disconnected reactivity graphs: the panel renders its initial
+zero state once and every async update (`session.usage.updated`, project
+total, tick) bumps a signal the host renderer never observes — the panel
+freezes at `$0.0000`. Verified empirically on OpenCode 2.0.22.
+
 After publishing, `opencode plugin add opencodebar` installs it globally.
 
 ## How it works
