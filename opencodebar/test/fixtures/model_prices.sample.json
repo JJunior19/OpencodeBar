@@ -1,0 +1,64 @@
+{
+  "anthropic/claude-sonnet-4-5": {
+    "max_tokens": 64000,
+    "max_input_tokens": 200000,
+    "input_cost_per_token": 0.000003,
+    "output_cost_per_token": 0.000015,
+    "cache_read_input_token_cost": 0.0000003,
+    "cache_creation_input_token_cost": 0.00000375,
+    "litellm_provider": "anthropic",
+    "mode": "chat"
+  },
+  "gemini/gemini-2.5-pro": {
+    "max_tokens": 65536,
+    "input_cost_per_token": 0.00000125,
+    "output_cost_per_token": 0.000005,
+    "cache_read_input_token_cost": 0.00000031,
+    "cache_creation_input_token_cost": 0.000005,
+    "mode": "chat"
+  },
+  "gemini/gemini-2.5-flash": {
+    "max_tokens": 65536,
+    "input_cost_per_token": 0.0000003,
+    "output_cost_per_token": 0.0000025,
+    "cache_read_input_token_cost": 0.000000075,
+    "cache_creation_input_token_cost": 0.000001,
+    "mode": "chat"
+  },
+  "google/gemini-2.5-flash": {
+    "input_cost_per_token": 0.0000009,
+    "output_cost_per_token": 0.000003,
+    "cache_read_input_token_cost": 0.000000225,
+    "cache_creation_input_token_cost": 0.00000225,
+    "mode": "chat"
+  },
+  "openai/gpt-5-mini": {
+    "max_tokens": 128000,
+    "input_cost_per_token": 0.0000004,
+    "output_cost_per_token": 0.0000032,
+    "cache_read_input_token_cost": 0.00000004,
+    "cache_creation_input_token_cost": 0.0000004,
+    "mode": "chat"
+  },
+  "azure/gpt-4o": {
+    "max_tokens": 16384,
+    "input_cost_per_token": 0.0000025,
+    "output_cost_per_token": 0.00001,
+    "mode": "chat"
+  },
+  "example/model-without-cache-costs": {
+    "input_cost_per_token": 0.000001,
+    "output_cost_per_token": 0.000002,
+    "mode": "chat"
+  },
+  "example/model-without-costs": {
+    "max_tokens": 8192,
+    "max_input_tokens": 8192,
+    "mode": "chat"
+  },
+  "bare-model-x": {
+    "input_cost_per_token": 0.0000005,
+    "output_cost_per_token": 0.0000015,
+    "mode": "chat"
+  }
+}

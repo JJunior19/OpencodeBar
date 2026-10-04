@@ -1,0 +1,32 @@
+{
+  "name": "opencodebar",
+  "version": "0.1.0",
+  "description": "API-equivalent cost tracking for OpenCode sessions, powered by LiteLLM list prices.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./tui": "./dist/tui.js"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build src/tui.tsx --outdir dist --external @opencode/plugin/tui --external solid-js --external @opentui/solid --external @opentui/core"
+  },
+  "dependencies": {
+    "@opencode/plugin": "latest"
+  },
+  "peerDependencies": {
+    "@opentui/core": ">=0.5.8",
+    "@opentui/solid": ">=0.5.8",
+    "solid-js": ">=1.9.0"
+  },
+  "devDependencies": {
+    "@opencode/theme": "^2.0.22",
+    "@opentui/core": "^0.5.14",
+    "@opentui/solid": "^0.5.14",
+    "@types/node": "^26.0.0",
+    "solid-js": "1.9.12",
+    "typescript": "~5.9.0",
+    "vitest": "^5.0.3"
+  }
+}
