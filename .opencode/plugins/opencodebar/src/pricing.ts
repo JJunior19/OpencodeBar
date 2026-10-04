@@ -118,6 +118,18 @@ export function lookupPrice(table: PriceTable, providerID: string, modelID: stri
     }
   }
 
+  // Coding-plan and gateway providers keep their upstream vendor as the first
+  // dash-separated segments (e.g. "zai-coding-plan" -> "zai/glm-5.3"). Try the
+  // remaining, progressively shorter dash prefixes, longest first, before the
+  // bare-id fallback. Single-segment provider ids skip this step: their exact
+  // form was already tried above.
+  const segments = providerID.split("-")
+  for (let end = segments.length - 1; end >= 1; end--) {
+    const prefix = segments.slice(0, end).join("-")
+    const entry = get(table, `${prefix}/${modelID}`)
+    if (entry !== undefined) return { matched: true, entry }
+  }
+
   const bare = get(table, modelID)
   if (bare !== undefined) return { matched: true, entry: bare }
 

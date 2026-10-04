@@ -121,3 +121,52 @@ describe("lookupPrice", () => {
     expect(result.matched).toBe(false)
   })
 })
+
+describe("provider dash-prefix cascade", () => {
+  const table = parseLiteLLMPrices({
+    "zai/glm-5.3": {
+      input_cost_per_token: 0.0000014,
+      output_cost_per_token: 0.0000044,
+      cache_read_input_token_cost: 0.00000026,
+    },
+    "zai/glm-4.5": {
+      input_cost_per_token: 0.0000007,
+      output_cost_per_token: 0.0000021,
+    },
+    "glm-4.5": {
+      input_cost_per_token: 0.0000005,
+      output_cost_per_token: 0.000001,
+    },
+    "a-b/m": {
+      input_cost_per_token: 0.0000009,
+      output_cost_per_token: 0.0000018,
+    },
+    "a/m": {
+      input_cost_per_token: 0.0000001,
+      output_cost_per_token: 0.0000002,
+    },
+  })
+
+  it("resolves coding-plan providers to their upstream vendor prefix", () => {
+    const result = lookupPrice(table, "zai-coding-plan", "glm-5.3")
+    expect(result.matched).toBe(true)
+    expect(result.entry?.litellmKey).toBe("zai/glm-5.3")
+  })
+
+  it("tries the longest dash prefix first", () => {
+    const result = lookupPrice(table, "a-b-c", "m")
+    expect(result.matched).toBe(true)
+    expect(result.entry?.litellmKey).toBe("a-b/m")
+  })
+
+  it("prefers a prefixed entry over an identical bare model id", () => {
+    const result = lookupPrice(table, "zai-proxy", "glm-4.5")
+    expect(result.matched).toBe(true)
+    expect(result.entry?.litellmKey).toBe("zai/glm-4.5")
+  })
+
+  it("stays unmatched when no prefix or bare entry exists", () => {
+    const result = lookupPrice(table, "github-copilot", "claude-x")
+    expect(result.matched).toBe(false)
+  })
+})
