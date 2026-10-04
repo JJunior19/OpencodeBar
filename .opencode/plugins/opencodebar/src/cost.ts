@@ -24,29 +24,34 @@ export interface UsageInput {
 }
 
 export interface CostOptions {
-  /** Bill reasoning tokens as output tokens. Default false. */
+  /** Bill reasoning tokens as output tokens. Default true. */
   readonly includeReasoning?: boolean
 }
 
 /**
  * API-equivalent cost of one token usage record.
  *
- * Formula: input*inputPrice + output*outputPrice
+ * Formula: input*inputPrice + (output+reasoning)*outputPrice
  *        + cache.read*cacheReadPrice + cache.write*cacheWritePrice
  * (LiteLLM prices are USD per single token.)
  *
- * Reasoning tokens are NOT added on top of output by default: Anthropic and
- * OpenAI bill reasoning as part of the output tokens, so adding them would
- * double-count. Verified empirically against a live session's built-in cost
- * (see README, "Reasoning-token validation"); the conclusion matched the
- * built-in cost only when reasoning was excluded.
+ * Reasoning tokens ARE billed at the output rate by default. Empirically
+ * validated on 2026-10-04 against OpenCode's built-in per-message cost for
+ * session ses_efbd93c2cffeNcIuIX2tQPpVrO (opencode-go/mimo-v2.6-pro, priced
+ * as LiteLLM xiaomi_mimo/mimo-v2.6-pro: 4.35e-7 / 8.7e-7 / 3.6e-9):
+ *   - with reasoning billed as output: $0.039131067 (0.011% off built-in
+ *     $0.039135355; per-message deltas ~0.008%)
+ *   - with reasoning excluded:        $0.017723847 (55% undercount)
+ * OpenCode's tokens.output and tokens.reasoning are disjoint counters, so
+ * excluding reasoning would silently drop most of the bill on
+ * reasoning-heavy models. Pass { includeReasoning: false } to exclude.
  *
  * A missing entry (unknown model) yields 0 — unknown models never contribute
  * to money totals.
  */
 export function computeTokenCost(tokens: TokenUsage, entry: PriceEntry | undefined, options: CostOptions = {}): number {
   if (entry === undefined) return 0
-  const output = options.includeReasoning === true ? tokens.output + tokens.reasoning : tokens.output
+  const output = options.includeReasoning === false ? tokens.output : tokens.output + tokens.reasoning
   return (
     tokens.input * entry.input +
     output * entry.output +

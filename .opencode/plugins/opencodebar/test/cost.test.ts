@@ -43,8 +43,8 @@ function usage(providerID: string, id: string, tokens: Partial<TokenUsage> = {})
   }
 }
 
-// 1000*3e-6 + 500*15e-6 + 5000*0.3e-6 + 1000*3.75e-6 = 0.01575
-const FULL_COST = 0.01575
+// 1000*3e-6 + (500+200)*15e-6 + 5000*0.3e-6 + 1000*3.75e-6 = 0.01875 (reasoning billed as output)
+const FULL_COST = 0.01875
 
 describe("computeTokenCost", () => {
   it("applies the four-tier per-token formula", () => {
@@ -52,15 +52,19 @@ describe("computeTokenCost", () => {
     expect(computeTokenCost(tokens, entry())).toBeCloseTo(FULL_COST, 10)
   })
 
-  it("does not bill reasoning tokens on top of output by default", () => {
+  it("bills reasoning tokens at the output rate by default", () => {
     const withReasoning: TokenUsage = { input: 1000, output: 500, reasoning: 9000, cache: { read: 0, write: 0 } }
     const withoutReasoning: TokenUsage = { input: 1000, output: 500, reasoning: 0, cache: { read: 0, write: 0 } }
-    expect(computeTokenCost(withReasoning, entry())).toBe(computeTokenCost(withoutReasoning, entry()))
+    expect(computeTokenCost(withReasoning, entry())).toBeCloseTo(
+      computeTokenCost(withoutReasoning, entry()) + 9000 * 15e-6,
+      10,
+    )
   })
 
-  it("bills reasoning tokens as output when explicitly requested", () => {
-    const tokens: TokenUsage = { input: 0, output: 0, reasoning: 1000, cache: { read: 0, write: 0 } }
-    expect(computeTokenCost(tokens, entry(), { includeReasoning: true })).toBeCloseTo(1000 * 15e-6, 10)
+  it("excludes reasoning tokens when explicitly requested", () => {
+    const tokens: TokenUsage = { input: 1000, output: 500, reasoning: 200, cache: { read: 5000, write: 1000 } }
+    // 1000*3e-6 + 500*15e-6 + 5000*0.3e-6 + 1000*3.75e-6 = 0.01575
+    expect(computeTokenCost(tokens, entry(), { includeReasoning: false })).toBeCloseTo(0.01575, 10)
   })
 
   it("treats unknown price tiers as zero", () => {
@@ -202,7 +206,7 @@ describe("formatting", () => {
   it("formats USD with fixed decimals", () => {
     expect(formatUSD(0, 4)).toBe("$0.0000")
     expect(formatUSD(0.5, 4)).toBe("$0.5000")
-    expect(formatUSD(FULL_COST, 4)).toBe("$0.0158")
+    expect(formatUSD(FULL_COST, 4)).toBe("$0.0187")
     expect(formatUSD(12.345, 2)).toBe("$12.35")
     expect(formatUSD(0, 2)).toBe("$0.00")
   })
