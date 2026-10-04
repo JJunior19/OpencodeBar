@@ -38,53 +38,42 @@ prices: 2h old
 
 ## Install
 
-> **Verified against OpenCode 2.0.22:** project-local `.opencode/plugins/`
-> directories are **not** auto-discovered by the server in this build
-> (tested: file form `plugins/<name>/index.ts`, package form with
-> `package.json` exports, and `plugins` entries in `opencode.jsonc` with
-> relative and absolute paths). The server discovers plugins only from
-> builtins, `~/.config/opencode/plugins/*.ts` files, and npm/Git packages
-> installed with `opencode plugin add`. The layout below is kept so the
-> package activates automatically once project-local discovery ships.
+opencodebar is a TUI-only plugin: the sidebar cost panel runs in the TUI
+client against the OpenCode server. There is no server entry — OpenCode
+discovers the plugin by the filename `tui.ts`.
 
-### From npm / Git (recommended)
+### Global (all projects) — symlink
 
 ```sh
-opencode plugin add opencodebar        # once published to npm
-# or, from a Git remote:
+ln -sfn /path/to/OpencodeBar/opencodebar ~/.config/opencode/plugins/opencodebar
+```
+
+Then restart the TUI in any project. Updates are live: `git pull` in the repo
+and restart the TUI. Remove with `rm ~/.config/opencode/plugins/opencodebar`.
+
+### Project-local
+
+Copy or symlink the package into `<project>/.opencode/plugins/opencodebar/`.
+On OpenCode 2.0.22 the server does not auto-discover project
+`.opencode/plugins/`, but the TUI client does (verified: the sidebar panel
+loads).
+
+### From npm / Git (once distributed)
+
+```sh
+opencode plugin add opencodebar            # once published to npm
 opencode plugin add github.com:<owner>/OpencodeBar
 ```
 
-This installs the package into OpenCode's managed plugin cache and registers
-it in the global configuration. The server plugin (`.` export) loads in the
-server; the CLI plugin (`./tui` export) loads in the TUI client. Restart the
-TUI after installing.
-
-### In a repository (future auto-load)
-
-Keep the package at `.opencode/plugins/opencodebar/`. Per the v2 docs,
-plugins under `.opencode/plugins/` load automatically — on 2.0.22 this did
-not work empirically; re-test after upgrading.
-
-### Verified local-server check
-
-With a symlink `~/.config/opencode/plugins/opencodebar-server.ts` pointing
-at `src/index.ts`, a fresh `opencode serve` reports:
-
-```
-opencodebar.server | local | { server: true } | { status: "active" }
-```
-
-The `./tui` entry requires the TUI client host (sidebar slots, storage,
-theme) and cannot load inside a bare server process — by design.
+This requires the package `package.json` at the repo root (currently the
+package lives in the `opencodebar/` subdirectory). See publish notes below.
 
 ### Publish notes
 
-`npm publish` ships the package as-is (TypeScript sources, per OpenCode plugin
-convention — the host loads `.` for the server plugin and `./tui` for the CLI
-plugin). Peer dependencies (`@opentui/core`, `@opentui/solid`, `solid-js`)
-are provided by the OpenCode host at runtime. After publishing,
-`opencode plugin add opencodebar` installs it globally.
+`npm publish` ships TypeScript sources (per OpenCode plugin convention — the
+host loads `./tui` for the CLI plugin). Peer dependencies (`@opentui/core`,
+`@opentui/solid`, `solid-js`) are provided by the OpenCode host at runtime.
+After publishing, `opencode plugin add opencodebar` installs it globally.
 
 ## How it works
 
