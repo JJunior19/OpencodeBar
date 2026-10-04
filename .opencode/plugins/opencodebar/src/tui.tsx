@@ -266,34 +266,43 @@ export default Plugin.define({
       bump()
     }, PANEL_TICK_MS)
 
-    context.keymap.layer(() => ({
-      mode: "global",
-      commands: [
-        {
-          id: "opencodebar.refresh",
-          title: "opencodebar: refresh LiteLLM prices",
-          group: "opencodebar",
-          slash: { name: "opencodebar", arguments: true },
-          run: async (input) => {
-            const argument = (input ?? "").trim()
-            if (argument !== "" && argument !== "refresh") {
-              context.ui.toast.show({ message: "Usage: /opencodebar refresh", variant: "info" })
-              return
-            }
-            const ok = await forceRefreshPrices()
-            if (ok) {
-              context.ui.toast.show({
-                message: `LiteLLM prices refreshed (${Object.keys(prices.entries).length} models, ${formatAge(0)})`,
-                variant: "success",
-              })
-            } else {
-              context.ui.toast.show({ message: `Price refresh failed: ${prices.error}`, variant: "error" })
-            }
-            bump()
-          },
-        },
-      ],
-    }))
+    // Keymap layers need the Keymap.Provider that only exists inside the
+    // component tree, so the command is registered from an "app" slot render
+    // (returns null; purely a registration host) per the documented pattern.
+    const stopKeymapSlot = context.ui.slot({
+      append: "app",
+      render: () => {
+        context.keymap.layer(() => ({
+          mode: "global",
+          commands: [
+            {
+              id: "opencodebar.refresh",
+              title: "opencodebar: refresh LiteLLM prices",
+              group: "opencodebar",
+              slash: { name: "opencodebar", arguments: true },
+              run: async (input) => {
+                const argument = (input ?? "").trim()
+                if (argument !== "" && argument !== "refresh") {
+                  context.ui.toast.show({ message: "Usage: /opencodebar refresh", variant: "info" })
+                  return
+                }
+                const ok = await forceRefreshPrices()
+                if (ok) {
+                  context.ui.toast.show({
+                    message: `LiteLLM prices refreshed (${Object.keys(prices.entries).length} models, ${formatAge(0)})`,
+                    variant: "success",
+                  })
+                } else {
+                  context.ui.toast.show({ message: `Price refresh failed: ${prices.error}`, variant: "error" })
+                }
+                bump()
+              },
+            },
+          ],
+        }))
+        return null
+      },
+    })
 
     const controller: PanelController = { revision, sessionReport, projectTotal, priceStatus }
 
@@ -312,6 +321,7 @@ export default Plugin.define({
     return () => {
       clearInterval(tick)
       stopSlot()
+      stopKeymapSlot()
       for (const stop of stops) stop()
     }
   },
