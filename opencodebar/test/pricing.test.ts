@@ -170,3 +170,54 @@ describe("provider dash-prefix cascade", () => {
     expect(result.matched).toBe(false)
   })
 })
+
+describe("suffix fallback", () => {
+  it("prefers a first-party vendor key over resellers", () => {
+    const table = parseLiteLLMPrices({
+      "xiaomi_mimo/mimo-v2.6-pro": { input_cost_per_token: 4.35e-7, output_cost_per_token: 8.7e-7 },
+      "openrouter/xiaomi/mimo-v2.6-pro": { input_cost_per_token: 5e-7, output_cost_per_token: 9e-7 },
+    })
+    const result = lookupPrice(table, "opencode-go", "mimo-v2.6-pro")
+    expect(result.matched).toBe(true)
+    expect(result.entry?.litellmKey).toBe("xiaomi_mimo/mimo-v2.6-pro")
+  })
+
+  it("resolves to the vendor key when many resellers exist", () => {
+    const table = parseLiteLLMPrices({
+      "deepseek/deepseek-v4-pro": { input_cost_per_token: 2.7e-7 },
+      "aihubmix/deepseek-v4-pro": { input_cost_per_token: 3e-7 },
+      "azure_ai/deepseek-v4-pro": { input_cost_per_token: 4e-7 },
+    })
+    const result = lookupPrice(table, "opencode-go", "deepseek-v4-pro")
+    expect(result.matched).toBe(true)
+    expect(result.entry?.litellmKey).toBe("deepseek/deepseek-v4-pro")
+  })
+
+  it("accepts a single unambiguous non-vendor key as a last resort", () => {
+    const table = parseLiteLLMPrices({
+      "openrouter/some-niche-model": { input_cost_per_token: 1e-6 },
+    })
+    const result = lookupPrice(table, "gateway-proxy", "some-niche-model")
+    expect(result.matched).toBe(true)
+    expect(result.entry?.litellmKey).toBe("openrouter/some-niche-model")
+  })
+
+  it("stays unmatched when only ambiguous reseller keys exist", () => {
+    const table = parseLiteLLMPrices({
+      "aihubmix/foo": { input_cost_per_token: 1e-6 },
+      "novita/foo": { input_cost_per_token: 2e-6 },
+    })
+    const result = lookupPrice(table, "gateway-proxy", "foo")
+    expect(result.matched).toBe(false)
+  })
+
+  it("keeps the dash-prefix match ahead of the suffix fallback", () => {
+    const table = parseLiteLLMPrices({
+      "zai/glm-5.3": { input_cost_per_token: 1.4e-6 },
+      "openrouter/zai/glm-5.3": { input_cost_per_token: 1.6e-6 },
+    })
+    const result = lookupPrice(table, "zai-coding-plan", "glm-5.3")
+    expect(result.matched).toBe(true)
+    expect(result.entry?.litellmKey).toBe("zai/glm-5.3")
+  })
+})

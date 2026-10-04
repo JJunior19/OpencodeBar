@@ -85,9 +85,14 @@ After publishing, `opencode plugin add opencodebar` installs it globally.
   most once per 24h with a 10s timeout; on failure the stale table is kept
   and its age is surfaced in the footer.
 - **Model matching** (deterministic, first hit wins): exact
-  `providerID/modelID`, then alias prefixes (`google` tries `gemini/` then
-  `google/`), then the bare model id. `variant` is ignored. No fuzzy
-  matching — unknown models are reported, never priced.
+  `providerID/modelID`, alias prefixes (`google` tries `gemini/` then
+  `google/`), dash-prefix cascade for coding-plan providers
+  (`zai-coding-plan` → `zai/glm-5.3`), the bare model id, then a suffix
+  fallback that matches the model id against the final segment of LiteLLM
+  keys and prefers a first-party vendor key (e.g. `mimo-v2.6-pro` →
+  `xiaomi_mimo/mimo-v2.6-pro`, not `openrouter/xiaomi/...`). Ambiguous
+  non-vendor keys stay unmatched. `variant` is ignored. No fuzzy matching —
+  unknown models are reported, never priced.
 - **Formula**: `input*input + (output+reasoning)*output + cache.read*cacheRead
   + cache.write*cacheWrite` (per-token prices).
 - **Project total**: prefers the server's one-call `session.stats` (per-model

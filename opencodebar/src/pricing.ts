@@ -37,6 +37,25 @@ export const PROVIDER_ALIASES: Readonly<Record<string, readonly string[]>> = {
   azure: ["azure"],
 }
 
+/**
+ * First-party provider prefixes whose LiteLLM key carries the vendor's own
+ * list price (as opposed to a reseller such as `openrouter/...` or
+ * `aihubmix/...`). Used by the suffix fallback to prefer canonical pricing.
+ */
+const VENDOR_PREFIXES: ReadonlySet<string> = new Set([
+  "anthropic",
+  "openai",
+  "google",
+  "gemini",
+  "deepseek",
+  "zai",
+  "xiaomi_mimo",
+  "mistral",
+  "cohere",
+  "xai",
+  "groq",
+])
+
 const COST_FIELDS = [
   "input_cost_per_token",
   "output_cost_per_token",
@@ -97,11 +116,52 @@ function get(table: PriceTable, key: string): PriceEntry | undefined {
   return entry === undefined || typeof entry.litellmKey !== "string" ? undefined : entry
 }
 
+/** modelID (final path segment) -> full keys, built once per table and cached. */
+const suffixIndexCache = new WeakMap<PriceTable, ReadonlyMap<string, readonly string[]>>()
+
+function suffixIndex(table: PriceTable): ReadonlyMap<string, readonly string[]> {
+  const cached = suffixIndexCache.get(table)
+  if (cached !== undefined) return cached
+  const index = new Map<string, string[]>()
+  for (const key of Object.keys(table)) {
+    const slash = key.lastIndexOf("/")
+    if (slash <= 0 || slash === key.length - 1) continue
+    const modelID = key.slice(slash + 1)
+    const existing = index.get(modelID)
+    if (existing === undefined) index.set(modelID, [key])
+    else existing.push(key)
+  }
+  suffixIndexCache.set(table, index)
+  return index
+}
+
+/**
+ * Last-resort match for models served by generic or coding-plan providers
+ * whose upstream vendor is not derivable from the provider id (e.g.
+ * `opencode-go/mimo-v2.6-pro` -> `xiaomi_mimo/mimo-v2.6-pro`). Match the model
+ * id against the final segment of LiteLLM keys, preferring a known first-party
+ * vendor key; otherwise accept a single unambiguous match. Ambiguous
+ * non-vendor keys stay unmatched — a price is never guessed.
+ */
+function suffixMatch(table: PriceTable, modelID: string): PriceEntry | undefined {
+  const candidates = suffixIndex(table).get(modelID)
+  if (candidates === undefined || candidates.length === 0) return undefined
+  for (const key of candidates) {
+    const prefix = key.slice(0, key.length - modelID.length - 1)
+    if (VENDOR_PREFIXES.has(prefix)) return get(table, key)
+  }
+  if (candidates.length === 1) return get(table, candidates[0])
+  return undefined
+}
+
 /**
  * Deterministic model matching; first hit wins:
  * 1. exact `${providerID}/${modelID}`
  * 2. alias prefixes for the provider, in declared order
- * 3. bare `${modelID}` (handles ids that already carry their prefix)
+ * 3. dash-prefix cascade for coding-plan providers (`zai-coding-plan` -> `zai`)
+ * 4. bare `${modelID}` (handles ids that already carry their prefix)
+ * 5. suffix fallback (see `suffixMatch`): final-segment match preferring a
+ *    first-party vendor key
  *
  * `variant` is deliberately ignored. No fuzzy or partial matching: an
  * unknown model must surface as "no price", never a guessed price.
@@ -132,6 +192,9 @@ export function lookupPrice(table: PriceTable, providerID: string, modelID: stri
 
   const bare = get(table, modelID)
   if (bare !== undefined) return { matched: true, entry: bare }
+
+  const suffix = suffixMatch(table, modelID)
+  if (suffix !== undefined) return { matched: true, entry: suffix }
 
   return { matched: false }
 }
