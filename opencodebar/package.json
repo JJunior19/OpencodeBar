@@ -1,6 +1,6 @@
 {
   "name": "opencodebar",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "API-equivalent cost tracking for OpenCode sessions, powered by LiteLLM list prices.",
   "type": "module",
   "license": "MIT",

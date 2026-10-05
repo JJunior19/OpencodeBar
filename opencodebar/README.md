@@ -29,7 +29,10 @@ prices: 2h old
   `no price` marker. Prices are never guessed; they are excluded from totals.
 - **Subagents (N)** — appears only when the family has subagent sessions.
 - **Project (7d)** — matched-model cost of the project's sessions created in
-  the last 7 days (capped at the 200 newest).
+  the last 7 days (capped at the 200 newest). The total spans the whole
+  project — repo root and every git worktree — so working in a worktree still
+  shows the full project history; recompute follows `worktree.updated` /
+  `worktree.resolved` events.
 - Footer — price cache age, or a fetch failure notice (stale prices are kept).
 
 ## Commands

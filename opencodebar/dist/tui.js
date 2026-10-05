@@ -78,6 +78,17 @@ function rollupFamily(sessions, rootID, lookup) {
 }
 var PROJECT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 var PROJECT_SESSION_CAP = 200;
+function resolveProjectDirectories(worktreeDirectories, sessionDirectory) {
+  const directories = [];
+  const seen = new Set;
+  for (const directory of [...worktreeDirectories, sessionDirectory]) {
+    if (directory === "" || seen.has(directory))
+      continue;
+    seen.add(directory);
+    directories.push(directory);
+  }
+  return directories;
+}
 function isInProjectWindow(createdMs, nowMs, windowMs = PROJECT_WINDOW_MS) {
   return Number.isFinite(createdMs) && createdMs >= nowMs - windowMs;
 }
@@ -476,31 +487,64 @@ var tui_default = Plugin.define({
         scheduleUsages(id);
       return rollupFamily(family.map((id) => ({ sessionID: id, usages: familyUsages.get(id)?.usages ?? [] })), rootID, lookup);
     }
+    let directoryCache;
+    let directoryFetch;
+    const PROJECT_DIRECTORY_TTL_MS = 60000;
+    async function fetchProjectDirectories(projectID, sessionDirectory) {
+      let reported = [];
+      try {
+        const entries = await context.client.worktree.list({ projectID });
+        reported = entries.map((entry) => entry.directory);
+      } catch {}
+      return resolveProjectDirectories(reported, sessionDirectory);
+    }
+    function resolveDirectories(projectID, sessionDirectory) {
+      const cached = directoryCache;
+      if (cached !== undefined && cached.projectID === projectID && Date.now() - cached.fetchedAt < PROJECT_DIRECTORY_TTL_MS) {
+        return Promise.resolve(cached.directories);
+      }
+      if (directoryFetch?.projectID === projectID)
+        return directoryFetch.promise;
+      const promise = fetchProjectDirectories(projectID, sessionDirectory).then((directories) => {
+        directoryCache = { projectID, fetchedAt: Date.now(), directories };
+        return directories;
+      }).finally(() => {
+        if (directoryFetch?.promise === promise)
+          directoryFetch = undefined;
+      });
+      directoryFetch = { projectID, promise };
+      return promise;
+    }
     let projectCache;
     let projectCompute;
-    async function computeProjectTotalForDirectory(directory) {
+    async function computeProjectTotal(directories) {
       const now = Date.now();
       const sessionIDs = [];
-      let cursor;
-      let stop = false;
-      while (!stop) {
-        const page = await context.client.session.list({
-          directory,
-          order: "desc",
-          limit: PROJECT_PAGE_LIMIT,
-          cursor
-        });
-        for (const session of page.data) {
-          if (shouldStopProjectPagination(session.time.created, now, sessionIDs.length)) {
-            stop = true;
-            break;
+      const seen = new Set;
+      for (const directory of directories) {
+        let cursor;
+        let stop = false;
+        while (!stop) {
+          const page = await context.client.session.list({
+            directory,
+            order: "desc",
+            limit: PROJECT_PAGE_LIMIT,
+            cursor
+          });
+          for (const session of page.data) {
+            if (shouldStopProjectPagination(session.time.created, now, sessionIDs.length)) {
+              stop = true;
+              break;
+            }
+            if (isInProjectWindow(session.time.created, now) && !seen.has(session.id)) {
+              seen.add(session.id);
+              sessionIDs.push(session.id);
+            }
           }
-          if (isInProjectWindow(session.time.created, now))
-            sessionIDs.push(session.id);
+          cursor = page.cursor.next ?? undefined;
+          if (cursor === undefined || stop)
+            break;
         }
-        cursor = page.cursor.next ?? undefined;
-        if (cursor === undefined || stop)
-          break;
       }
       let total = 0;
       const queue = [...sessionIDs];
@@ -519,15 +563,15 @@ var tui_default = Plugin.define({
       await Promise.all(workers);
       return { total, sessions: sessionIDs.length };
     }
-    function ensureProjectTotal(directory) {
+    function ensureProjectTotal(projectID, sessionDirectory) {
       const cached = projectCache;
       const now = Date.now();
-      if (cached !== undefined && cached.directory === directory && !cached.dirty && now - cached.computedAt < PROJECT_TTL_MS) {
+      if (cached !== undefined && cached.projectID === projectID && !cached.dirty && now - cached.computedAt < PROJECT_TTL_MS) {
         return;
       }
       if (projectCompute === undefined) {
-        projectCompute = computeProjectTotalForDirectory(directory).then((result) => {
-          projectCache = { directory, computedAt: Date.now(), dirty: false, total: result.total, sessions: result.sessions };
+        projectCompute = resolveDirectories(projectID, sessionDirectory).then((directories) => computeProjectTotal(directories)).then((result) => {
+          projectCache = { projectID, computedAt: Date.now(), dirty: false, total: result.total, sessions: result.sessions };
           bump();
         }).catch(() => {}).finally(() => projectCompute = undefined);
       }
@@ -536,13 +580,18 @@ var tui_default = Plugin.define({
       const session = context.data.session.get(sessionID);
       if (session === undefined)
         return { state: "loading", total: 0, sessionCount: 0 };
-      const directory = session.location.directory;
-      ensureProjectTotal(directory);
+      ensureProjectTotal(session.projectID, session.location.directory);
       const cached = projectCache;
-      if (cached !== undefined && cached.directory === directory) {
+      if (cached !== undefined && cached.projectID === session.projectID) {
         return { state: "ok", total: cached.total, sessionCount: cached.sessions };
       }
       return { state: "loading", total: 0, sessionCount: 0 };
+    }
+    function invalidateWorktrees() {
+      directoryCache = undefined;
+      if (projectCache !== undefined)
+        projectCache.dirty = true;
+      bump();
     }
     const stops = [
       context.data.on("session.usage.updated", () => {
@@ -554,7 +603,9 @@ var tui_default = Plugin.define({
         }
         bump();
       }),
-      context.data.on("session.deleted", () => bump())
+      context.data.on("session.deleted", () => bump()),
+      context.data.on("worktree.updated", invalidateWorktrees),
+      context.data.on("worktree.resolved", invalidateWorktrees)
     ];
     const tick = setInterval(() => {
       ensurePrices();

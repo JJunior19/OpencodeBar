@@ -9,6 +9,7 @@ import {
   isInProjectWindow,
   PROJECT_SESSION_CAP,
   PROJECT_WINDOW_MS,
+  resolveProjectDirectories,
   rollupFamily,
   shouldStopProjectPagination,
   type TokenUsage,
@@ -45,6 +46,28 @@ function usage(providerID: string, id: string, tokens: Partial<TokenUsage> = {})
 
 // 1000*3e-6 + (500+200)*15e-6 + 5000*0.3e-6 + 1000*3.75e-6 = 0.01875 (reasoning billed as output)
 const FULL_COST = 0.01875
+
+describe("resolveProjectDirectories", () => {
+  it("unions the server-reported directories with the session directory", () => {
+    expect(resolveProjectDirectories(["/repo", "/repo-wt-a"], "/repo-wt-b")).toEqual([
+      "/repo",
+      "/repo-wt-a",
+      "/repo-wt-b",
+    ])
+  })
+
+  it("dedupes, keeping first occurrence order", () => {
+    expect(resolveProjectDirectories(["/repo", "/wt", "/repo"], "/wt")).toEqual(["/repo", "/wt"])
+  })
+
+  it("degrades to the session directory when the listing is empty or failed", () => {
+    expect(resolveProjectDirectories([], "/repo")).toEqual(["/repo"])
+  })
+
+  it("drops empty strings so a malformed entry never becomes a scan target", () => {
+    expect(resolveProjectDirectories(["", "/wt"], "/repo")).toEqual(["/wt", "/repo"])
+  })
+})
 
 describe("computeTokenCost", () => {
   it("applies the four-tier per-token formula", () => {
