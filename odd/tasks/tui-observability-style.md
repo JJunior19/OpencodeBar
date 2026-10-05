@@ -81,6 +81,23 @@ pair (observability; style) on `feature/tui-improve`, no PR yet.
   symlink `~/.config/opencode/plugins/opencodebar` → this worktree's
   `opencodebar/`. TUI restart pending (user action).
 
+- [x] T4 — Style pass 2 + weekly timeline. Commit `866b96e`.
+  - `fitLabel`: truncates only when label LONGER than width
+    (`Project · 7d` exact-12 no longer renders `Project · 7…`).
+  - `shareBar`: draws when contenders >= 1 && total > 0; single model
+    renders `▇▇▇100%`; multi-model relative shares unchanged.
+  - Header brand: per-span bold `OpencodeBar · API est.` via OpenTUI
+    `<b>` (BoldSpanRenderable — verified in @opentui/solid types AND
+    host 2.0.22 binary by writer); split lives in tested
+    `sectionHeaderParts`; bold span inherits parent fg (no span fg).
+  - Weekly timeline: `sparklineBlocks` (7 cells, ramp `▁▂▃▄▅▆▇`,
+    0 → space); `computeProjectTotal` buckets session cost by LOCAL
+    calendar day (slot 0 = 6 days ago, DST-safe `localDaysAgo`,
+    rolling-window edge guarded 0..6); `ProjectTotalView.days`;
+    muted `7d <blocks>` row under Project · 7d when ok && total > 0.
+  - Route: delegated writer. RED 9 failed → GREEN 28/28 file scope;
+    63 → 72 total. Typecheck clean, build 29.59 KB.
+
 ## Verification of record
 
 - Baseline (writer, pre-change): `npm test` → 52 passed (3 files).
@@ -103,6 +120,10 @@ pair (observability; style) on `feature/tui-improve`, no PR yet.
 - 2026-10-05 02:43: writer completed T1+T2+T3-build; all checks green.
 - 2026-10-05 02:46: work-unit commit `beaab35`; install vehicle
   swapped (managed 0.1.2 → symlink to this worktree).
+- 2026-10-05 03:07: T4 committed `866b96e` (parent spot check: 72/72,
+  diff readback: bucketing slot guard, header parts, sparkline guard
+  all correct). Pending: user restarts TUI to see bold header,
+  single-model bar and 7d sparkline.
 
 ## Next step
 
@@ -111,3 +132,10 @@ User restarts the TUI and reads the panel: if `r<N>` advances but
 previously-invisible error). If `r<N>` is frozen, the Solid signal
 graph is dead in the config-dir load path — next investigation step
 is the host plugin loader.
+
+- 2026-10-05 02:55: USER LIVE RESULT (symlink install): panel ALIVE —
+  Project $22.64, 9 sessions, r23 advancing. Frozen-panel mystery
+  resolved: managed npm install path was the culprit; config-dir
+  symlink load works. User feedback for next pass: (1) `Project · 7…`
+  truncation ugly (fitLabel exact-length bug), (2) wants weekly
+  timeline bars, (3) wants brand title bold. -> T4 created.
