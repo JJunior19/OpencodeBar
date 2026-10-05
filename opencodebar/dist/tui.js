@@ -252,10 +252,12 @@ function lookupPrice(table, providerID, modelID) {
 import { For, Show, createMemo } from "solid-js";
 
 // src/format.ts
+var PANEL_WIDTH = 34;
 var VALUE_WIDTH = 10;
-var BAR_WIDTH = 5;
+var SHARE_ZONE_WIDTH = 7;
+var SHARE_BAR_CELLS = 3;
 var NAME_MIN = 8;
-var NAME_MAX = 16;
+var NAME_MAX = 14;
 var DETENT = 2;
 function fitLabel(label, width) {
   if (label.length >= width)
@@ -270,11 +272,29 @@ function sectionHeader(title, width) {
   const right = Math.max(0, width - text.length - 2);
   return "──" + text + "─".repeat(right);
 }
-function shareBar(usd, maxUsd, contenders) {
-  if (contenders < 2 || maxUsd <= 0)
+function truncateWithEllipsis(text, width) {
+  if (text.length <= width)
+    return text;
+  return text.slice(0, Math.max(0, width - 1)) + "…";
+}
+function shareBar(usd, totalUsd, contenders) {
+  if (contenders < 2 || totalUsd <= 0)
     return "";
-  const filled = Math.max(1, Math.round(usd / maxUsd * BAR_WIDTH));
-  return "▇".repeat(Math.min(BAR_WIDTH, filled));
+  const share = usd / totalUsd;
+  const filled = Math.max(1, Math.round(share * SHARE_BAR_CELLS));
+  const percent = Math.round(share * 100);
+  return "▇".repeat(Math.min(SHARE_BAR_CELLS, filled)).padEnd(SHARE_BAR_CELLS) + `${percent}%`.padStart(SHARE_ZONE_WIDTH - SHARE_BAR_CELLS);
+}
+function heartbeatFooter(body, revision, width = PANEL_WIDTH) {
+  const heartbeat = ` · r${revision}`;
+  return truncateWithEllipsis(body, width - heartbeat.length) + heartbeat;
+}
+function formatUSDAdaptive(amount) {
+  if (amount >= 100)
+    return formatUSD(amount, 2);
+  if (amount >= 1)
+    return formatUSD(amount, 3);
+  return formatUSD(amount, 4);
 }
 function billedOutput(tokens) {
   return tokens.output + tokens.reasoning;
@@ -302,6 +322,10 @@ function CostPanel(props) {
     return props.ctrl.projectTotal(props.sessionID);
   });
   const prices = createMemo(() => props.ctrl.priceStatus());
+  const errors = createMemo(() => {
+    props.ctrl.revision();
+    return props.ctrl.errors();
+  });
   const nameWidth = createMemo(() => {
     const longest = report().models.reduce((max, model) => Math.max(max, shortModelName(model.modelID).length), 0);
     return Math.min(NAME_MAX, Math.max(NAME_MIN, longest));
@@ -310,7 +334,6 @@ function CostPanel(props) {
     return Math.max("Project · 7d".length, DETENT + nameWidth());
   });
   const barContenders = createMemo(() => report().models.filter((model) => model.matched && model.usd > 0).length);
-  const maxModelUsd = createMemo(() => report().models.reduce((max, model) => Math.max(max, model.usd), 0));
   return /* @__PURE__ */ jsxDEV(Show, {
     when: props.sessionID !== "",
     children: /* @__PURE__ */ jsxDEV("box", {
@@ -321,17 +344,24 @@ function CostPanel(props) {
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV("text", {
           fg: props.theme.text,
-          children: panelRow("Session", formatUSD(report().total, 4), rowLabelWidth())
+          children: panelRow("Session", formatUSDAdaptive(report().total), rowLabelWidth())
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV("text", {
           fg: props.theme.muted,
           children: `${" ".repeat(DETENT + 1)}${tokenDetail(report().tokens)}`
         }, undefined, false, undefined, this),
+        /* @__PURE__ */ jsxDEV(Show, {
+          when: errors().family !== "" && report().models.length === 0 && report().total === 0,
+          children: /* @__PURE__ */ jsxDEV("text", {
+            fg: props.theme.warning,
+            children: truncateWithEllipsis(`! ctx: ${errors().family}`, PANEL_WIDTH)
+          }, undefined, false, undefined, this)
+        }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV(For, {
           each: report().models,
           children: (model) => {
             const name = shortModelName(model.modelID);
-            const bar = shareBar(model.usd, maxModelUsd(), barContenders()).padEnd(BAR_WIDTH);
+            const bar = shareBar(model.usd, report().total, barContenders()).padEnd(SHARE_ZONE_WIDTH);
             return /* @__PURE__ */ jsxDEV("box", {
               children: [
                 /* @__PURE__ */ jsxDEV(Show, {
@@ -342,7 +372,7 @@ function CostPanel(props) {
                   }, undefined, false, undefined, this),
                   children: /* @__PURE__ */ jsxDEV("text", {
                     fg: props.theme.muted,
-                    children: `${" ".repeat(DETENT)}${fitLabel(name, nameWidth())}${bar}${formatUSD(model.usd, 4).padStart(VALUE_WIDTH)}`
+                    children: `${" ".repeat(DETENT)}${fitLabel(name, nameWidth())}${bar}${formatUSDAdaptive(model.usd).padStart(VALUE_WIDTH)}`
                   }, undefined, false, undefined, this)
                 }, undefined, false, undefined, this),
                 /* @__PURE__ */ jsxDEV("text", {
@@ -357,22 +387,29 @@ function CostPanel(props) {
           when: report().subagents.count > 0,
           children: /* @__PURE__ */ jsxDEV("text", {
             fg: props.theme.muted,
-            children: `${" ".repeat(DETENT)}· subagents (${report().subagents.count}): ${formatUSD(report().subagents.total, 4)}`
+            children: `${" ".repeat(DETENT)}· subagents (${report().subagents.count}): ${formatUSDAdaptive(report().subagents.total)}`
           }, undefined, false, undefined, this)
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV("text", {
           fg: props.theme.text,
-          children: panelRow("Project · 7d", project().state === "ok" ? formatUSD(project().total, 2) : "…", rowLabelWidth())
+          children: panelRow("Project · 7d", project().state === "ok" ? formatUSD(project().total, 2) : project().state === "error" ? "!" : "…", rowLabelWidth())
+        }, undefined, false, undefined, this),
+        /* @__PURE__ */ jsxDEV(Show, {
+          when: project().state === "error",
+          children: /* @__PURE__ */ jsxDEV("text", {
+            fg: props.theme.warning,
+            children: truncateWithEllipsis(`! ${project().message}`, PANEL_WIDTH)
+          }, undefined, false, undefined, this)
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV(Show, {
           when: prices().state === "error" || prices().state === "unavailable",
           fallback: /* @__PURE__ */ jsxDEV("text", {
             fg: props.theme.muted,
-            children: project().state === "ok" && project().sessionCount > 0 ? `${project().sessionCount} sessions · ${prices().label}` : prices().label
+            children: heartbeatFooter(project().state === "ok" && project().sessionCount > 0 ? `${project().sessionCount} sessions · ${prices().label}` : prices().label, props.ctrl.revision())
           }, undefined, false, undefined, this),
           children: /* @__PURE__ */ jsxDEV("text", {
             fg: props.theme.warning,
-            children: prices().label
+            children: heartbeatFooter(prices().label, props.ctrl.revision())
           }, undefined, false, undefined, this)
         }, undefined, false, undefined, this)
       ]
@@ -456,6 +493,7 @@ var tui_default = Plugin.define({
     const familyUsages = new Map;
     const familyInflight = new Set;
     let viewedSessionID = "";
+    let familyError = "";
     async function fetchUsages(sessionID) {
       const messages = await context.client.session.context({ sessionID });
       const usages = [];
@@ -468,6 +506,9 @@ var tui_default = Plugin.define({
         });
       }
       familyUsages.set(sessionID, { usages, fetchedAt: Date.now() });
+      if (viewedSessionID !== "" && context.data.session.family(viewedSessionID).includes(sessionID)) {
+        familyError = "";
+      }
       bump();
     }
     function scheduleUsages(sessionID) {
@@ -477,10 +518,15 @@ var tui_default = Plugin.define({
       if (familyInflight.has(sessionID))
         return;
       familyInflight.add(sessionID);
-      fetchUsages(sessionID).catch(() => {}).finally(() => familyInflight.delete(sessionID));
+      fetchUsages(sessionID).catch((error) => {
+        familyError = error instanceof Error ? error.message : String(error);
+      }).finally(() => familyInflight.delete(sessionID));
     }
     function sessionReport(sessionID) {
-      viewedSessionID = sessionID;
+      if (sessionID !== viewedSessionID) {
+        viewedSessionID = sessionID;
+        familyError = "";
+      }
       const rootID = context.data.session.root(sessionID);
       const family = context.data.session.family(sessionID);
       for (const id of family)
@@ -517,6 +563,7 @@ var tui_default = Plugin.define({
     }
     let projectCache;
     let projectCompute;
+    let projectError = "";
     async function computeProjectTotal(directories) {
       const now = Date.now();
       const sessionIDs = [];
@@ -572,20 +619,25 @@ var tui_default = Plugin.define({
       if (projectCompute === undefined) {
         projectCompute = resolveDirectories(projectID, sessionDirectory).then((directories) => computeProjectTotal(directories)).then((result) => {
           projectCache = { projectID, computedAt: Date.now(), dirty: false, total: result.total, sessions: result.sessions };
+          projectError = "";
           bump();
-        }).catch(() => {}).finally(() => projectCompute = undefined);
+        }).catch((error) => {
+          projectError = error instanceof Error ? error.message : String(error);
+        }).finally(() => projectCompute = undefined);
       }
     }
     function projectTotal(sessionID) {
       const session = context.data.session.get(sessionID);
       if (session === undefined)
-        return { state: "loading", total: 0, sessionCount: 0 };
+        return { state: "loading", total: 0, sessionCount: 0, message: "" };
       ensureProjectTotal(session.projectID, session.location.directory);
       const cached = projectCache;
       if (cached !== undefined && cached.projectID === session.projectID) {
-        return { state: "ok", total: cached.total, sessionCount: cached.sessions };
+        return { state: "ok", total: cached.total, sessionCount: cached.sessions, message: "" };
       }
-      return { state: "loading", total: 0, sessionCount: 0 };
+      if (projectError !== "")
+        return { state: "error", total: 0, sessionCount: 0, message: projectError };
+      return { state: "loading", total: 0, sessionCount: 0, message: "" };
     }
     function invalidateWorktrees() {
       directoryCache = undefined;
@@ -649,7 +701,13 @@ var tui_default = Plugin.define({
         return null;
       }
     });
-    const controller = { revision, sessionReport, projectTotal, priceStatus };
+    const controller = {
+      revision,
+      sessionReport,
+      projectTotal,
+      priceStatus,
+      errors: () => ({ family: familyError, project: projectError })
+    };
     const theme = {
       text: context.theme.text.base,
       muted: context.theme.text.muted,

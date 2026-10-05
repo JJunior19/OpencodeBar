@@ -14,26 +14,46 @@ public per-token pricing, cached locally with a 24h refresh.
 For the selected session (including every subagent session in its family):
 
 ```
-Session (API est.): $0.1234
-  claude-sonnet-4-5   $0.1100
-  gpt-5-mini          $0.0134
-  internal-model      no price (12.3k tok)
-Subagents (2): $0.0500
-Project (7d): $12.34
-prices: 2h old
+── Cost · API est. ──────────
+Session           $0.1234
+ ↓ 250k · ↑ 60k · ↺ 9.5M
+  claude-sonnet… ▇▇  67%     $0.082
+  gpt-5-mini     ▇    8%     $0.010
+  internal-model        no price
+ · subagents (2): $0.031
+Project · 7d          $12.34
+38 sessions · prices: 2h old · r17
 ```
 
-- **Session (API est.)** — family total, matched models only.
-- One line per model, merged across the family, sorted by cost.
-- Models without a LiteLLM price are listed with token counts and a
-  `no price` marker. Prices are never guessed; they are excluded from totals.
+- **Session (API est.)** — family total, matched models only. Money values
+  use adaptive precision: 2 decimals from $100, 3 from $1, 4 below.
+- One line per model, merged across the family, sorted by cost. With two or
+  more priced models, each line carries a 7-cell share zone — a 3-cell `▇`
+  bar plus the model's integer percent of the family total (e.g. `▇▇  67%`).
+- Models without a LiteLLM price are listed with a `no price` marker.
+  Prices are never guessed; they are excluded from totals.
 - **Subagents (N)** — appears only when the family has subagent sessions.
 - **Project (7d)** — matched-model cost of the project's sessions created in
   the last 7 days (capped at the 200 newest). The total spans the whole
   project — repo root and every git worktree — so working in a worktree still
   shows the full project history; recompute follows `worktree.updated` /
-  `worktree.resolved` events.
-- Footer — price cache age, or a fetch failure notice (stale prices are kept).
+  `worktree.resolved` events. Value is `…` while loading, `!` when the fetch
+  failed (with a `! <message>` warning line under it).
+- Footer — session count, price cache age or a fetch failure notice, and the
+  `r<N>` reactivity heartbeat. Every row stays inside the 34-column sidebar
+  budget; messages are truncated with an ellipsis to fit.
+
+### Diagnostics
+
+- `! ctx: <message>` — the session transcript fetch failed and the report has
+  no models and a zero total yet; cleared by a successful fetch.
+- Project value `!` plus a `! <message>` line — the project-total fetch chain
+  failed; shown until a successful recompute replaces it (`…` = loading).
+- Footer `· r<N>` — reactivity heartbeat: N is the panel's internal revision
+  and is bumped on usage events, session switches, and every 30s tick. If N
+  stays frozen across ticks, the signal graph is dead — the panel will not
+  update no matter what the plugin computes (for the known cause, see the
+  dual-Solid note under [Publish notes](#publish-notes)).
 
 ## Commands
 

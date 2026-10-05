@@ -115,6 +115,9 @@ export default Plugin.define({
     const familyUsages = new Map<string, { usages: UsageInput[]; fetchedAt: number }>()
     const familyInflight = new Set<string>()
     let viewedSessionID = ""
+    // Last family-transcript fetch failure; cleared by a successful fetch of
+    // the viewed family (and on session switch). Diagnostic only.
+    let familyError = ""
 
     async function fetchUsages(sessionID: string): Promise<void> {
       const messages = await context.client.session.context({ sessionID })
@@ -127,6 +130,9 @@ export default Plugin.define({
         })
       }
       familyUsages.set(sessionID, { usages, fetchedAt: Date.now() })
+      if (viewedSessionID !== "" && context.data.session.family(viewedSessionID).includes(sessionID)) {
+        familyError = ""
+      }
       bump()
     }
 
@@ -136,12 +142,20 @@ export default Plugin.define({
       if (familyInflight.has(sessionID)) return
       familyInflight.add(sessionID)
       void fetchUsages(sessionID)
-        .catch(() => {})
+        .catch((error: unknown) => {
+          // Swallow for control flow, but surface the reason on the panel.
+          familyError = error instanceof Error ? error.message : String(error)
+        })
         .finally(() => familyInflight.delete(sessionID))
     }
 
     function sessionReport(sessionID: string) {
-      viewedSessionID = sessionID
+      if (sessionID !== viewedSessionID) {
+        viewedSessionID = sessionID
+        // A stale failure from a previously viewed family must not bleed
+        // into the newly selected session's panel.
+        familyError = ""
+      }
       const rootID = context.data.session.root(sessionID)
       const family = context.data.session.family(sessionID)
       for (const id of family) scheduleUsages(id)
@@ -213,6 +227,9 @@ export default Plugin.define({
 
     let projectCache: ProjectCache | undefined
     let projectCompute: Promise<void> | undefined
+    // Last project-total failure; replaced by the next successful compute.
+    // Diagnostic only — control flow still swallows the rejection.
+    let projectError = ""
 
     async function computeProjectTotal(directories: readonly string[]): Promise<{ total: number; sessions: number }> {
       const now = Date.now()
@@ -276,9 +293,13 @@ export default Plugin.define({
           .then((directories) => computeProjectTotal(directories))
           .then((result) => {
             projectCache = { projectID, computedAt: Date.now(), dirty: false, total: result.total, sessions: result.sessions }
+            projectError = ""
             bump()
           })
-          .catch(() => {})
+          .catch((error: unknown) => {
+            // Swallow for control flow, but surface the reason on the panel.
+            projectError = error instanceof Error ? error.message : String(error)
+          })
           .finally(() => (projectCompute = undefined))
       }
     }
@@ -287,13 +308,16 @@ export default Plugin.define({
       // Key by the session's project (root + worktrees share one projectID)
       // and keep the directory as the pagination filter and safety net.
       const session = context.data.session.get(sessionID)
-      if (session === undefined) return { state: "loading", total: 0, sessionCount: 0 }
+      if (session === undefined) return { state: "loading", total: 0, sessionCount: 0, message: "" }
       ensureProjectTotal(session.projectID, session.location.directory)
       const cached = projectCache
       if (cached !== undefined && cached.projectID === session.projectID) {
-        return { state: "ok", total: cached.total, sessionCount: cached.sessions }
+        return { state: "ok", total: cached.total, sessionCount: cached.sessions, message: "" }
       }
-      return { state: "loading", total: 0, sessionCount: 0 }
+      // The last error wins over loading: keep showing it while a retry is
+      // in flight, until a success replaces it.
+      if (projectError !== "") return { state: "error", total: 0, sessionCount: 0, message: projectError }
+      return { state: "loading", total: 0, sessionCount: 0, message: "" }
     }
 
     // ----- events, tick, slash command, slot -----
@@ -366,7 +390,13 @@ export default Plugin.define({
       },
     })
 
-    const controller: PanelController = { revision, sessionReport, projectTotal, priceStatus }
+    const controller: PanelController = {
+      revision,
+      sessionReport,
+      projectTotal,
+      priceStatus,
+      errors: () => ({ family: familyError, project: projectError }),
+    }
 
     const theme: CostPanelTheme = {
       text: context.theme.text.base,
