@@ -14,26 +14,69 @@ public per-token pricing, cached locally with a 24h refresh.
 For the selected session (including every subagent session in its family):
 
 ```
-Session (API est.): $0.1234
-  claude-sonnet-4-5   $0.1100
-  gpt-5-mini          $0.0134
-  internal-model      no price (12.3k tok)
-Subagents (2): $0.0500
-Project (7d): $12.34
-prices: 2h old
+── OpencodeBar · API est. 
+Session           $0.1234
+ ↓ 250k · ↑ 60k · ↺ 9.5M
+ ↺ saved $0.0135
+  claude-sonnet… ▇▇  67%     $0.082
+  gpt-5-mini     ▇    8%     $0.010
+  internal-model ▇    0% no price
+ · subagents (2): $0.031
+  explore-wor          $0.021
+  cost-panel           $0.010
+Project · 7d          $12.34
+ Today $0.5123 · saved $3.40
+ 7d ▁▂▄▅▆▇
+10 ses · prices 38m · r17
 ```
 
-- **Session (API est.)** — family total, matched models only.
-- One line per model, merged across the family, sorted by cost.
-- Models without a LiteLLM price are listed with token counts and a
-  `no price` marker. Prices are never guessed; they are excluded from totals.
-- **Subagents (N)** — appears only when the family has subagent sessions.
+- **Header** — the `OpencodeBar` brand renders bold (OpenTUI `<b>` span),
+  followed by `· API est.` in the normal weight. The header's natural width
+  (26 cells) can extend past the value column but stays inside the 34-column
+  sidebar budget.
+- **Session (API est.)** — family total, matched models only. Money values
+  use adaptive precision: 2 decimals from $100, 3 from $1, 4 below.
+- **↺ saved** — cache savings under the session row: what the cached tokens
+  would have cost at the uncached input price (per-component clamp, so a
+  cache tier priced above input never counts negative). Hidden when zero.
+- One line per model, merged across the family, sorted by cost. Whenever the
+  family total is positive and at least one model is priced, each line
+  carries a 7-cell share zone — a 3-cell `▇` bar plus the model's integer
+  percent of the family total (e.g. `▇▇  67%`). The common single-model
+  session shows a full `▇▇▇100%` zone.
+- Models without a LiteLLM price are listed with a `no price` marker.
+  Prices are never guessed; they are excluded from totals.
+- **Subagents (N)** — appears only when the family has subagent sessions,
+  followed by the top 4 by cost (positive only), one right-aligned row per
+  subagent titled with its session title (short session id as fallback).
 - **Project (7d)** — matched-model cost of the project's sessions created in
   the last 7 days (capped at the 200 newest). The total spans the whole
   project — repo root and every git worktree — so working in a worktree still
   shows the full project history; recompute follows `worktree.updated` /
-  `worktree.resolved` events.
-- Footer — price cache age, or a fetch failure notice (stale prices are kept).
+  `worktree.resolved` events. Value is `…` while loading, `!` when the fetch
+  failed (with a `! <message>` warning line under it).
+- **Today line** — under the project row (once the total is positive):
+  today's spend, plus the 7-day window's cache savings when positive.
+- **7d sparkline** — under the today line: one block per local calendar
+  day, oldest (6 days ago) to today. Block height is the square root of
+  the day's share of the week's max spend, so cheap days stay readable
+  next to a spike; a zero-spend day renders a space.
+- Footer — session count, price-cache age (`prices 38m`; the full
+  diagnostic label is kept for loading/failure states), and the `r<N>`
+  reactivity heartbeat. Every row stays inside the 34-column sidebar
+  budget; messages are truncated with an ellipsis to fit.
+
+### Diagnostics
+
+- `! ctx: <message>` — the session transcript fetch failed and the report has
+  no models and a zero total yet; cleared by a successful fetch.
+- Project value `!` plus a `! <message>` line — the project-total fetch chain
+  failed; shown until a successful recompute replaces it (`…` = loading).
+- Footer `· r<N>` — reactivity heartbeat: N is the panel's internal revision
+  and is bumped on usage events, session switches, and every 30s tick. If N
+  stays frozen across ticks, the signal graph is dead — the panel will not
+  update no matter what the plugin computes (for the known cause, see the
+  dual-Solid note under [Publish notes](#publish-notes)).
 
 ## Commands
 
@@ -109,7 +152,9 @@ After publishing, `opencode plugin add opencodebar` installs it globally.
   non-vendor keys stay unmatched. `variant` is ignored. No fuzzy matching —
   unknown models are reported, never priced.
 - **Formula**: `input*input + (output+reasoning)*output + cache.read*cacheRead
-  + cache.write*cacheWrite` (per-token prices).
+  + cache.write*cacheWrite` (per-token prices). Cache savings (session and
+  project `saved` values) are `cache.read*(input-cacheRead) +
+  cache.write*(input-cacheWrite)`, clamped per component at 0.
 - **Project total**: prefers the server's one-call `session.stats` (per-model
   token usage for the window); falls back to paginating `/api/session`
   newest-first and reading messages with concurrency 4. Cached 60s,

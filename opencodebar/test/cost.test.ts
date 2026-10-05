@@ -3,6 +3,7 @@ import type { PriceEntry } from "../src/pricing"
 import {
   aggregateModels,
   computeTokenCost,
+  computeTokenSavings,
   formatAge,
   formatTokens,
   formatUSD,
@@ -12,6 +13,7 @@ import {
   resolveProjectDirectories,
   rollupFamily,
   shouldStopProjectPagination,
+  withSubagentNames,
   type TokenUsage,
   type UsageInput,
 } from "../src/cost"
@@ -103,6 +105,35 @@ describe("computeTokenCost", () => {
   it("returns zero for a missing price entry", () => {
     const tokens: TokenUsage = { input: 1000, output: 500, reasoning: 0, cache: { read: 0, write: 0 } }
     expect(computeTokenCost(tokens, undefined)).toBe(0)
+  })
+})
+
+describe("computeTokenSavings", () => {
+  const CACHED: TokenUsage = { input: 1000, output: 500, reasoning: 0, cache: { read: 5000, write: 1000 } }
+
+  it("returns zero for a missing price entry", () => {
+    expect(computeTokenSavings(CACHED, undefined)).toBe(0)
+  })
+
+  it("counts the discount of cached tokens against the input price", () => {
+    // balanced tiers: 5000*(3e-6-0.3e-6) + 1000*(3e-6-0.3e-6) = 0.0162
+    const balanced = entry({ cacheWrite: 0.3e-6 })
+    expect(computeTokenSavings(CACHED, balanced)).toBeCloseTo(0.0162, 10)
+  })
+
+  it("clamps a component whose cache price exceeds the input price to zero", () => {
+    // default entry: cacheWrite 3.75e-6 > input 3e-6 -> write saves nothing;
+    // read still saves 5000*(3e-6-0.3e-6) = 0.0135.
+    expect(computeTokenSavings(CACHED, entry())).toBeCloseTo(0.0135, 10)
+  })
+
+  it("treats unknown cache tiers as free cache (full input-price saving)", () => {
+    const partial = entry({
+      cacheRead: 0,
+      cacheWrite: 0,
+      known: { input: true, output: true, cacheRead: false, cacheWrite: false },
+    })
+    expect(computeTokenSavings(CACHED, partial)).toBeCloseTo(6000 * 3e-6, 10)
   })
 })
 
@@ -215,6 +246,79 @@ describe("rollupFamily", () => {
     expect(report.total).toBeCloseTo(FULL_COST, 10)
     expect(report.subagents.count).toBe(1)
     expect(report.subagents.total).toBeCloseTo(FULL_COST, 10)
+  })
+
+  it("accumulates cache savings across root and subagents", () => {
+    const report = rollupFamily(
+      [
+        { sessionID: "root", usages: [usage("anthropic", "claude-sonnet-4-5")] },
+        { sessionID: "sub-1", usages: [usage("openai", "gpt-5-mini")] },
+        { sessionID: "sub-2", usages: [usage("weird", "unknown-model", { input: 5, output: 0, cache: { read: 0, write: 0 } })] },
+      ],
+      "root",
+      lookup,
+    )
+    // Two matched usages save 0.0135 each (reads discounted, write tier
+    // clamped); the unknown model never contributes savings.
+    expect(report.cacheSaved).toBeCloseTo(2 * 0.0135, 10)
+  })
+
+  it("breaks subagent cost down per session, sorted by cost descending", () => {
+    const report = rollupFamily(
+      [
+        { sessionID: "root", usages: [usage("anthropic", "claude-sonnet-4-5")] },
+        {
+          sessionID: "sub-light",
+          usages: [usage("openai", "gpt-5-mini", { input: 100, output: 50, cache: { read: 0, write: 0 } })],
+        },
+        { sessionID: "sub-heavy", usages: [usage("openai", "gpt-5-mini"), usage("anthropic", "claude-sonnet-4-5")] },
+        { sessionID: "sub-idle", usages: [] },
+      ],
+      "root",
+      lookup,
+    )
+    expect(report.subagents.items.map((item) => item.sessionID)).toEqual(["sub-heavy", "sub-light", "sub-idle"])
+    expect(report.subagents.items).toHaveLength(report.subagents.count)
+    const sum = report.subagents.items.reduce((acc, item) => acc + item.usd, 0)
+    expect(sum).toBeCloseTo(report.subagents.total, 10)
+    expect(report.subagents.items[0]?.usd).toBeCloseTo(FULL_COST * 2, 10)
+  })
+})
+
+describe("withSubagentNames", () => {
+  const lookup = (providerID: string, modelID: string): PriceEntry | undefined =>
+    modelID === "claude-sonnet-4-5" || modelID === "gpt-5-mini" ? entry() : undefined
+
+  it("resolves names onto items without changing order or totals", () => {
+    const base = rollupFamily(
+      [
+        { sessionID: "root", usages: [usage("anthropic", "claude-sonnet-4-5")] },
+        { sessionID: "sub-1", usages: [usage("openai", "gpt-5-mini")] },
+      ],
+      "root",
+      lookup,
+    )
+    const named = withSubagentNames(base, (id) => (id === "sub-1" ? "explore workers" : ""))
+    expect(named.subagents.items).toHaveLength(1)
+    expect(named.subagents.items[0]?.name).toBe("explore workers")
+    expect(named.subagents.items[0]?.usd).toBeCloseTo(base.subagents.total, 10)
+    expect(named.total).toBeCloseTo(base.total, 10)
+    expect(named.subagents.count).toBe(base.subagents.count)
+    // Pure call: the source report is not mutated.
+    expect(base.subagents.items[0]).not.toHaveProperty("name")
+  })
+
+  it("allows empty names for sessions without a title", () => {
+    const base = rollupFamily(
+      [
+        { sessionID: "root", usages: [] },
+        { sessionID: "sub-1", usages: [usage("openai", "gpt-5-mini")] },
+      ],
+      "root",
+      lookup,
+    )
+    const named = withSubagentNames(base, () => "")
+    expect(named.subagents.items[0]?.name).toBe("")
   })
 })
 

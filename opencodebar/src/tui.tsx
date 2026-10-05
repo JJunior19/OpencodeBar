@@ -9,11 +9,13 @@ import { Plugin } from "@opencode/plugin/tui"
 import { createSignal } from "solid-js"
 import {
   computeTokenCost,
+  computeTokenSavings,
   formatAge,
   isInProjectWindow,
   resolveProjectDirectories,
   rollupFamily,
   shouldStopProjectPagination,
+  withSubagentNames,
   type UsageInput,
 } from "./cost"
 import { lookupPrice, parseLiteLLMPrices, type PriceEntry } from "./pricing"
@@ -90,14 +92,14 @@ export default Plugin.define({
 
     function priceStatus(): PriceStatusView {
       const entryCount = Object.keys(prices.entries).length
-      if (entryCount === 0 && priceFetch !== undefined) return { state: "loading", label: "prices: loading" }
+      if (entryCount === 0 && priceFetch !== undefined) return { state: "loading", label: "prices: loading", ageMs: 0 }
       if (entryCount === 0 && prices.error !== "") {
-        return { state: "unavailable", label: `prices: unavailable (${prices.error})` }
+        return { state: "unavailable", label: `prices: unavailable (${prices.error})`, ageMs: 0 }
       }
       if (prices.error !== "") {
-        return { state: "error", label: `prices: fetch failed, cache ${formatAge(Date.now() - prices.fetchedAt)}` }
+        return { state: "error", label: `prices: fetch failed, cache ${formatAge(Date.now() - prices.fetchedAt)}`, ageMs: 0 }
       }
-      return { state: "ok", label: `prices: ${formatAge(Date.now() - prices.fetchedAt)}` }
+      return { state: "ok", label: `prices: ${formatAge(Date.now() - prices.fetchedAt)}`, ageMs: Date.now() - prices.fetchedAt }
     }
 
     // ----- reactivity -----
@@ -115,6 +117,9 @@ export default Plugin.define({
     const familyUsages = new Map<string, { usages: UsageInput[]; fetchedAt: number }>()
     const familyInflight = new Set<string>()
     let viewedSessionID = ""
+    // Last family-transcript fetch failure; cleared by a successful fetch of
+    // the viewed family (and on session switch). Diagnostic only.
+    let familyError = ""
 
     async function fetchUsages(sessionID: string): Promise<void> {
       const messages = await context.client.session.context({ sessionID })
@@ -127,6 +132,9 @@ export default Plugin.define({
         })
       }
       familyUsages.set(sessionID, { usages, fetchedAt: Date.now() })
+      if (viewedSessionID !== "" && context.data.session.family(viewedSessionID).includes(sessionID)) {
+        familyError = ""
+      }
       bump()
     }
 
@@ -136,19 +144,30 @@ export default Plugin.define({
       if (familyInflight.has(sessionID)) return
       familyInflight.add(sessionID)
       void fetchUsages(sessionID)
-        .catch(() => {})
+        .catch((error: unknown) => {
+          // Swallow for control flow, but surface the reason on the panel.
+          familyError = error instanceof Error ? error.message : String(error)
+        })
         .finally(() => familyInflight.delete(sessionID))
     }
 
     function sessionReport(sessionID: string) {
-      viewedSessionID = sessionID
+      if (sessionID !== viewedSessionID) {
+        viewedSessionID = sessionID
+        // A stale failure from a previously viewed family must not bleed
+        // into the newly selected session's panel.
+        familyError = ""
+      }
       const rootID = context.data.session.root(sessionID)
       const family = context.data.session.family(sessionID)
       for (const id of family) scheduleUsages(id)
-      return rollupFamily(
-        family.map((id) => ({ sessionID: id, usages: familyUsages.get(id)?.usages ?? [] })),
-        rootID,
-        lookup,
+      return withSubagentNames(
+        rollupFamily(
+          family.map((id) => ({ sessionID: id, usages: familyUsages.get(id)?.usages ?? [] })),
+          rootID,
+          lookup,
+        ),
+        (id) => context.data.session.get(id)?.title ?? "",
       )
     }
 
@@ -209,14 +228,33 @@ export default Plugin.define({
       dirty: boolean
       total: number
       sessions: number
+      days: number[]
+      saved: number
     }
 
     let projectCache: ProjectCache | undefined
     let projectCompute: Promise<void> | undefined
+    // Last project-total failure; replaced by the next successful compute.
+    // Diagnostic only — control flow still swallows the rejection.
+    let projectError = ""
 
-    async function computeProjectTotal(directories: readonly string[]): Promise<{ total: number; sessions: number }> {
+    const MS_PER_DAY = 24 * 60 * 60 * 1000
+
+    /** Local calendar-day distance: midnights between the two instants. */
+    function localDaysAgo(createdMs: number, nowMs: number): number {
+      const created = new Date(createdMs)
+      created.setHours(0, 0, 0, 0)
+      const today = new Date(nowMs)
+      today.setHours(0, 0, 0, 0)
+      // Round: DST shifts make midnight-to-midnight 23h/25h long.
+      return Math.round((today.getTime() - created.getTime()) / MS_PER_DAY)
+    }
+
+    async function computeProjectTotal(
+      directories: readonly string[],
+    ): Promise<{ total: number; sessions: number; days: number[]; saved: number }> {
       const now = Date.now()
-      const sessionIDs: string[] = []
+      const inWindow: { id: string; created: number }[] = []
       const seen = new Set<string>()
       for (const directory of directories) {
         let cursor: string | undefined
@@ -229,13 +267,13 @@ export default Plugin.define({
             cursor,
           })
           for (const session of page.data) {
-            if (shouldStopProjectPagination(session.time.created, now, sessionIDs.length)) {
+            if (shouldStopProjectPagination(session.time.created, now, inWindow.length)) {
               stop = true
               break
             }
             if (isInProjectWindow(session.time.created, now) && !seen.has(session.id)) {
               seen.add(session.id)
-              sessionIDs.push(session.id)
+              inWindow.push({ id: session.id, created: session.time.created })
             }
           }
           cursor = page.cursor.next ?? undefined
@@ -243,18 +281,32 @@ export default Plugin.define({
         }
       }
 
+      // Weekly timeline buckets: slot 0 = 6 local-calendar days ago …
+      // slot 6 = today, keyed by each session's creation day.
+      const days = [0, 0, 0, 0, 0, 0, 0]
       let total = 0
-      const queue = [...sessionIDs]
+      let saved = 0
+      const queue = [...inWindow]
       const workers = Array.from({ length: Math.min(PROJECT_FETCH_CONCURRENCY, queue.length) }, async () => {
-        for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+        for (let session = queue.shift(); session !== undefined; session = queue.shift()) {
           try {
-            const messages = await context.client.session.context({ sessionID: id })
+            const messages = await context.client.session.context({ sessionID: session.id })
+            let sessionTotal = 0
+            let sessionSaved = 0
             for (const message of messages) {
               if (message.type !== "assistant" || message.tokens === undefined) continue
-              total += computeTokenCost(
-                message.tokens,
-                lookup(message.model.providerID, message.model.id),
-              )
+              const entry = lookup(message.model.providerID, message.model.id)
+              sessionTotal += computeTokenCost(message.tokens, entry)
+              sessionSaved += computeTokenSavings(message.tokens, entry)
+            }
+            total += sessionTotal
+            saved += sessionSaved
+            const daysAgo = localDaysAgo(session.created, now)
+            // The rolling 7*24h window can still catch a session created 7
+            // calendar days ago (edge hours); only in-range days bucket.
+            if (daysAgo >= 0 && daysAgo <= 6) {
+              const slot = 6 - daysAgo
+              days[slot] = (days[slot] ?? 0) + sessionTotal
             }
           } catch {
             // A single unreadable session must not sink the project total.
@@ -262,7 +314,7 @@ export default Plugin.define({
         }
       })
       await Promise.all(workers)
-      return { total, sessions: sessionIDs.length }
+      return { total, sessions: inWindow.length, days, saved }
     }
 
     function ensureProjectTotal(projectID: string, sessionDirectory: string): void {
@@ -275,10 +327,22 @@ export default Plugin.define({
         projectCompute = resolveDirectories(projectID, sessionDirectory)
           .then((directories) => computeProjectTotal(directories))
           .then((result) => {
-            projectCache = { projectID, computedAt: Date.now(), dirty: false, total: result.total, sessions: result.sessions }
+            projectCache = {
+              projectID,
+              computedAt: Date.now(),
+              dirty: false,
+              total: result.total,
+              sessions: result.sessions,
+              days: result.days,
+              saved: result.saved,
+            }
+            projectError = ""
             bump()
           })
-          .catch(() => {})
+          .catch((error: unknown) => {
+            // Swallow for control flow, but surface the reason on the panel.
+            projectError = error instanceof Error ? error.message : String(error)
+          })
           .finally(() => (projectCompute = undefined))
       }
     }
@@ -287,13 +351,16 @@ export default Plugin.define({
       // Key by the session's project (root + worktrees share one projectID)
       // and keep the directory as the pagination filter and safety net.
       const session = context.data.session.get(sessionID)
-      if (session === undefined) return { state: "loading", total: 0, sessionCount: 0 }
+      if (session === undefined) return { state: "loading", total: 0, sessionCount: 0, days: [], saved: 0, message: "" }
       ensureProjectTotal(session.projectID, session.location.directory)
       const cached = projectCache
       if (cached !== undefined && cached.projectID === session.projectID) {
-        return { state: "ok", total: cached.total, sessionCount: cached.sessions }
+        return { state: "ok", total: cached.total, sessionCount: cached.sessions, days: cached.days, saved: cached.saved, message: "" }
       }
-      return { state: "loading", total: 0, sessionCount: 0 }
+      // The last error wins over loading: keep showing it while a retry is
+      // in flight, until a success replaces it.
+      if (projectError !== "") return { state: "error", total: 0, sessionCount: 0, days: [], saved: 0, message: projectError }
+      return { state: "loading", total: 0, sessionCount: 0, days: [], saved: 0, message: "" }
     }
 
     // ----- events, tick, slash command, slot -----
@@ -366,7 +433,13 @@ export default Plugin.define({
       },
     })
 
-    const controller: PanelController = { revision, sessionReport, projectTotal, priceStatus }
+    const controller: PanelController = {
+      revision,
+      sessionReport,
+      projectTotal,
+      priceStatus,
+      errors: () => ({ family: familyError, project: projectError }),
+    }
 
     const theme: CostPanelTheme = {
       text: context.theme.text.base,

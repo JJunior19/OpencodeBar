@@ -1,9 +1,35 @@
 import { describe, expect, it } from "vitest"
-import { billedOutput, fitLabel, panelRow, sectionHeader, shareBar, tokenDetail } from "../src/format"
+import {
+  DETENT,
+  NAME_MAX,
+  PANEL_WIDTH,
+  SHARE_ZONE_WIDTH,
+  VALUE_WIDTH,
+  billedOutput,
+  compactAge,
+  fitLabel,
+  formatUSDAdaptive,
+  heartbeatFooter,
+  panelRow,
+  sectionHeader,
+  sectionHeaderParts,
+  shareBar,
+  sparklineBlocks,
+  todayLine,
+  tokenDetail,
+  truncateWithEllipsis,
+} from "../src/format"
+
+const DAY_MS = 24 * 60 * 60 * 1000
 
 describe("fitLabel", () => {
   it("pads short labels to the target width", () => {
     expect(fitLabel("glm-5.3", 10)).toBe("glm-5.3   ")
+  })
+
+  it("passes an exact-width label through unchanged", () => {
+    expect(fitLabel("Project · 7d", 12)).toBe("Project · 7d")
+    expect(fitLabel("exact", 5)).toBe("exact")
   })
 
   it("truncates long labels with an ellipsis", () => {
@@ -29,16 +55,163 @@ describe("sectionHeader", () => {
   })
 })
 
-describe("shareBar", () => {
-  it("scales proportionally with a minimum of one cell", () => {
-    expect(shareBar(10, 10, 2)).toBe("▇▇▇▇▇")
-    expect(shareBar(5, 10, 2)).toBe("▇▇▇")
-    expect(shareBar(1, 10, 2)).toBe("▇")
+describe("shareBar (share of family total)", () => {
+  it("draws a 7-cell zone: bar padded to 3, gap, right-aligned percent", () => {
+    expect(shareBar(4.2, 10, 2)).toBe("▇   42%")
+    expect(shareBar(5, 10, 2)).toBe("▇▇  50%")
+    expect(shareBar(0.7, 10, 2)).toBe("▇    7%")
   })
 
-  it("returns empty without a meaningful comparison", () => {
-    expect(shareBar(10, 10, 1)).toBe("")
+  it("keeps exactly 7 cells even at a rounded 100 percent", () => {
+    expect(shareBar(10, 10, 2)).toBe("▇▇▇100%")
+    expect(shareBar(10, 10, 2)).toHaveLength(SHARE_ZONE_WIDTH)
+  })
+
+  it("enforces a minimum of one bar cell when drawn", () => {
+    expect(shareBar(0.01, 10, 2)).toBe("▇    0%")
+  })
+
+  it("never exceeds the 7-cell zone across the share range", () => {
+    for (const share of [0.001, 0.07, 0.25, 0.42, 0.5, 0.75, 0.99, 1]) {
+      expect(shareBar(share * 10, 10, 2)).toHaveLength(SHARE_ZONE_WIDTH)
+    }
+  })
+
+  it("draws a full bar for the common single-model family", () => {
+    expect(shareBar(10, 10, 1)).toBe("▇▇▇100%")
+    expect(shareBar(10, 10, 1)).toHaveLength(SHARE_ZONE_WIDTH)
+  })
+
+  it("returns empty only when there is no positive total to share", () => {
+    expect(shareBar(0, 0, 1)).toBe("")
     expect(shareBar(0, 0, 2)).toBe("")
+    expect(shareBar(3, 0, 2)).toBe("")
+  })
+})
+
+describe("sparklineBlocks (weekly timeline)", () => {
+  it("renders nothing for empty input", () => {
+    expect(sparklineBlocks([])).toBe("")
+  })
+
+  it("renders one space per day when every value is zero", () => {
+    expect(sparklineBlocks([0, 0, 0, 0, 0, 0, 0])).toBe("       ")
+  })
+
+  it("maps a monotonic ramp through the sqrt curve", () => {
+    // level = round(sqrt(v/max) * 6) for v = 1..7 (max 7):
+    //   [2.27, 3.21, 3.93, 4.54, 5.07, 5.55, 6] -> ramp[2,3,4,5,5,6,6]
+    expect(sparklineBlocks([1, 2, 3, 4, 5, 6, 7])).toBe("▃▄▅▆▆▇▇")
+  })
+
+  it("renders zero days as spaces around a single spike", () => {
+    expect(sparklineBlocks([0, 0, 9, 0, 0, 0, 0])).toBe("  ▇    ")
+  })
+
+  it("keeps the max day on the top block and lifts a half-max day to ramp[4]", () => {
+    // half-max: round(sqrt(0.5) * 6) = round(4.24) = 4 -> ▅ (linear was ▄)
+    expect(sparklineBlocks([8, 0, 4, 0, 8, 0, 0])).toBe("▇ ▅ ▇  ")
+    expect(sparklineBlocks([8, 0, 4, 0, 8, 0, 0])).toHaveLength(7)
+  })
+
+  it("draws a quarter-max day above the linear level", () => {
+    // quarter-max: round(sqrt(0.25) * 6) = round(3) = 3 -> ▄ (linear: ▃)
+    expect(sparklineBlocks([4, 1, 4])).toBe("▇▄▇")
+  })
+})
+
+describe("compactAge", () => {
+  it("mirrors formatAge thresholds without the verbose wording", () => {
+    expect(compactAge(0)).toBe("now")
+    expect(compactAge(59_000)).toBe("now")
+    expect(compactAge(60_000)).toBe("1m")
+    expect(compactAge(38 * 60_000)).toBe("38m")
+    expect(compactAge(90 * 60_000)).toBe("1h")
+    expect(compactAge(2 * 60 * 60_000)).toBe("2h")
+    expect(compactAge(25 * 60 * 60_000)).toBe("1d")
+    expect(compactAge(3 * DAY_MS)).toBe("3d")
+  })
+})
+
+describe("todayLine (project today row + savings)", () => {
+  it("renders today's spend and positive savings", () => {
+    // formatUSDAdaptive: $4.196 (4 decimals <$1), $12.400 (3 decimals >= $1)
+    expect(todayLine(4.196, 12.4)).toBe(" Today $4.196 · saved $12.400")
+  })
+
+  it("omits the savings part when nothing was saved", () => {
+    expect(todayLine(0.5123, 0)).toBe(" Today $0.5123")
+  })
+
+  it("stays inside the 34-column budget at extreme values", () => {
+    // Widest adaptive renderings: today "$12345.67" (9 cells, >= $10000) and
+    // saved "$123456.78" (10 cells): 1+5+1+9+3+5+1+10 = 35 -> trimmed.
+    const line = todayLine(12345.67, 123456.78)
+    expect(line.length).toBeLessThanOrEqual(PANEL_WIDTH)
+  })
+})
+
+describe("sectionHeaderParts (brand header segments)", () => {
+  it("splits the brand so the pieces reassemble the full header line", () => {
+    for (const width of [22, 26, 34]) {
+      const [lead, brand, tail] = sectionHeaderParts(width)
+      expect(brand).toBe("OpencodeBar")
+      expect(lead + brand + tail).toBe(sectionHeader("OpencodeBar · API est.", width))
+    }
+  })
+
+  it("keeps the brand header inside the panel budget at its natural width", () => {
+    const natural = sectionHeaderParts(0).join("")
+    expect(natural).toHaveLength(26)
+    expect(natural.length).toBeLessThanOrEqual(PANEL_WIDTH)
+  })
+})
+
+describe("formatUSDAdaptive", () => {
+  it("uses two decimals from $100", () => {
+    expect(formatUSDAdaptive(123.456)).toBe("$123.46")
+    expect(formatUSDAdaptive(100)).toBe("$100.00")
+  })
+
+  it("uses three decimals from $1", () => {
+    expect(formatUSDAdaptive(12.3456)).toBe("$12.346")
+    expect(formatUSDAdaptive(1)).toBe("$1.000")
+  })
+
+  it("keeps four decimals below $1", () => {
+    expect(formatUSDAdaptive(0.98765)).toBe("$0.9877")
+    expect(formatUSDAdaptive(0)).toBe("$0.0000")
+  })
+})
+
+describe("truncateWithEllipsis", () => {
+  it("returns lines within the width unchanged", () => {
+    expect(truncateWithEllipsis("! ctx: session list failed", PANEL_WIDTH)).toBe("! ctx: session list failed")
+  })
+
+  it("truncates overflowing lines to the width with an ellipsis", () => {
+    const line = truncateWithEllipsis(`! ${"x".repeat(50)}`, PANEL_WIDTH)
+    expect(line).toHaveLength(PANEL_WIDTH)
+    expect(line.endsWith("…")).toBe(true)
+    expect(truncateWithEllipsis("! boom", 1)).toBe("…")
+  })
+})
+
+describe("heartbeatFooter", () => {
+  it("appends the revision heartbeat to a fitting footer", () => {
+    expect(heartbeatFooter("38 sessions · prices: 2m old", 17)).toBe("38 sessions · prices: 2m old · r17")
+  })
+
+  it("trims the body, never the heartbeat, at the width limit", () => {
+    const line = heartbeatFooter("200 sessions · prices: just now", 1234)
+    expect(line).toHaveLength(PANEL_WIDTH)
+    expect(line.endsWith(" · r1234")).toBe(true)
+  })
+})
+
+describe("layout budget", () => {
+  it("keeps the per-model row inside the 34-column budget", () => {
+    expect(DETENT + NAME_MAX + SHARE_ZONE_WIDTH + VALUE_WIDTH).toBeLessThanOrEqual(PANEL_WIDTH)
   })
 })
 
