@@ -9,11 +9,13 @@ import { Plugin } from "@opencode/plugin/tui"
 import { createSignal } from "solid-js"
 import {
   computeTokenCost,
+  computeTokenSavings,
   formatAge,
   isInProjectWindow,
   resolveProjectDirectories,
   rollupFamily,
   shouldStopProjectPagination,
+  withSubagentNames,
   type UsageInput,
 } from "./cost"
 import { lookupPrice, parseLiteLLMPrices, type PriceEntry } from "./pricing"
@@ -90,14 +92,14 @@ export default Plugin.define({
 
     function priceStatus(): PriceStatusView {
       const entryCount = Object.keys(prices.entries).length
-      if (entryCount === 0 && priceFetch !== undefined) return { state: "loading", label: "prices: loading" }
+      if (entryCount === 0 && priceFetch !== undefined) return { state: "loading", label: "prices: loading", ageMs: 0 }
       if (entryCount === 0 && prices.error !== "") {
-        return { state: "unavailable", label: `prices: unavailable (${prices.error})` }
+        return { state: "unavailable", label: `prices: unavailable (${prices.error})`, ageMs: 0 }
       }
       if (prices.error !== "") {
-        return { state: "error", label: `prices: fetch failed, cache ${formatAge(Date.now() - prices.fetchedAt)}` }
+        return { state: "error", label: `prices: fetch failed, cache ${formatAge(Date.now() - prices.fetchedAt)}`, ageMs: 0 }
       }
-      return { state: "ok", label: `prices: ${formatAge(Date.now() - prices.fetchedAt)}` }
+      return { state: "ok", label: `prices: ${formatAge(Date.now() - prices.fetchedAt)}`, ageMs: Date.now() - prices.fetchedAt }
     }
 
     // ----- reactivity -----
@@ -159,10 +161,13 @@ export default Plugin.define({
       const rootID = context.data.session.root(sessionID)
       const family = context.data.session.family(sessionID)
       for (const id of family) scheduleUsages(id)
-      return rollupFamily(
-        family.map((id) => ({ sessionID: id, usages: familyUsages.get(id)?.usages ?? [] })),
-        rootID,
-        lookup,
+      return withSubagentNames(
+        rollupFamily(
+          family.map((id) => ({ sessionID: id, usages: familyUsages.get(id)?.usages ?? [] })),
+          rootID,
+          lookup,
+        ),
+        (id) => context.data.session.get(id)?.title ?? "",
       )
     }
 
@@ -224,6 +229,7 @@ export default Plugin.define({
       total: number
       sessions: number
       days: number[]
+      saved: number
     }
 
     let projectCache: ProjectCache | undefined
@@ -246,7 +252,7 @@ export default Plugin.define({
 
     async function computeProjectTotal(
       directories: readonly string[],
-    ): Promise<{ total: number; sessions: number; days: number[] }> {
+    ): Promise<{ total: number; sessions: number; days: number[]; saved: number }> {
       const now = Date.now()
       const inWindow: { id: string; created: number }[] = []
       const seen = new Set<string>()
@@ -279,20 +285,22 @@ export default Plugin.define({
       // slot 6 = today, keyed by each session's creation day.
       const days = [0, 0, 0, 0, 0, 0, 0]
       let total = 0
+      let saved = 0
       const queue = [...inWindow]
       const workers = Array.from({ length: Math.min(PROJECT_FETCH_CONCURRENCY, queue.length) }, async () => {
         for (let session = queue.shift(); session !== undefined; session = queue.shift()) {
           try {
             const messages = await context.client.session.context({ sessionID: session.id })
             let sessionTotal = 0
+            let sessionSaved = 0
             for (const message of messages) {
               if (message.type !== "assistant" || message.tokens === undefined) continue
-              sessionTotal += computeTokenCost(
-                message.tokens,
-                lookup(message.model.providerID, message.model.id),
-              )
+              const entry = lookup(message.model.providerID, message.model.id)
+              sessionTotal += computeTokenCost(message.tokens, entry)
+              sessionSaved += computeTokenSavings(message.tokens, entry)
             }
             total += sessionTotal
+            saved += sessionSaved
             const daysAgo = localDaysAgo(session.created, now)
             // The rolling 7*24h window can still catch a session created 7
             // calendar days ago (edge hours); only in-range days bucket.
@@ -306,7 +314,7 @@ export default Plugin.define({
         }
       })
       await Promise.all(workers)
-      return { total, sessions: inWindow.length, days }
+      return { total, sessions: inWindow.length, days, saved }
     }
 
     function ensureProjectTotal(projectID: string, sessionDirectory: string): void {
@@ -326,6 +334,7 @@ export default Plugin.define({
               total: result.total,
               sessions: result.sessions,
               days: result.days,
+              saved: result.saved,
             }
             projectError = ""
             bump()
@@ -342,16 +351,16 @@ export default Plugin.define({
       // Key by the session's project (root + worktrees share one projectID)
       // and keep the directory as the pagination filter and safety net.
       const session = context.data.session.get(sessionID)
-      if (session === undefined) return { state: "loading", total: 0, sessionCount: 0, days: [], message: "" }
+      if (session === undefined) return { state: "loading", total: 0, sessionCount: 0, days: [], saved: 0, message: "" }
       ensureProjectTotal(session.projectID, session.location.directory)
       const cached = projectCache
       if (cached !== undefined && cached.projectID === session.projectID) {
-        return { state: "ok", total: cached.total, sessionCount: cached.sessions, days: cached.days, message: "" }
+        return { state: "ok", total: cached.total, sessionCount: cached.sessions, days: cached.days, saved: cached.saved, message: "" }
       }
       // The last error wins over loading: keep showing it while a retry is
       // in flight, until a success replaces it.
-      if (projectError !== "") return { state: "error", total: 0, sessionCount: 0, days: [], message: projectError }
-      return { state: "loading", total: 0, sessionCount: 0, days: [], message: "" }
+      if (projectError !== "") return { state: "error", total: 0, sessionCount: 0, days: [], saved: 0, message: projectError }
+      return { state: "loading", total: 0, sessionCount: 0, days: [], saved: 0, message: "" }
     }
 
     // ----- events, tick, slash command, slot -----

@@ -6,6 +6,7 @@ import {
   SHARE_ZONE_WIDTH,
   VALUE_WIDTH,
   billedOutput,
+  compactAge,
   fitLabel,
   formatUSDAdaptive,
   heartbeatFooter,
@@ -14,9 +15,12 @@ import {
   sectionHeaderParts,
   shareBar,
   sparklineBlocks,
+  todayLine,
   tokenDetail,
   truncateWithEllipsis,
 } from "../src/format"
+
+const DAY_MS = 24 * 60 * 60 * 1000
 
 describe("fitLabel", () => {
   it("pads short labels to the target width", () => {
@@ -94,17 +98,56 @@ describe("sparklineBlocks (weekly timeline)", () => {
     expect(sparklineBlocks([0, 0, 0, 0, 0, 0, 0])).toBe("       ")
   })
 
-  it("maps a monotonic ramp across the block levels", () => {
-    expect(sparklineBlocks([1, 2, 3, 4, 5, 6, 7])).toBe("▂▃▄▄▅▆▇")
+  it("maps a monotonic ramp through the sqrt curve", () => {
+    // level = round(sqrt(v/max) * 6) for v = 1..7 (max 7):
+    //   [2.27, 3.21, 3.93, 4.54, 5.07, 5.55, 6] -> ramp[2,3,4,5,5,6,6]
+    expect(sparklineBlocks([1, 2, 3, 4, 5, 6, 7])).toBe("▃▄▅▆▆▇▇")
   })
 
   it("renders zero days as spaces around a single spike", () => {
     expect(sparklineBlocks([0, 0, 9, 0, 0, 0, 0])).toBe("  ▇    ")
   })
 
-  it("keeps the max day on the top block and a half-max day mid-ramp", () => {
-    expect(sparklineBlocks([8, 0, 4, 0, 8, 0, 0])).toBe("▇ ▄ ▇  ")
+  it("keeps the max day on the top block and lifts a half-max day to ramp[4]", () => {
+    // half-max: round(sqrt(0.5) * 6) = round(4.24) = 4 -> ▅ (linear was ▄)
+    expect(sparklineBlocks([8, 0, 4, 0, 8, 0, 0])).toBe("▇ ▅ ▇  ")
     expect(sparklineBlocks([8, 0, 4, 0, 8, 0, 0])).toHaveLength(7)
+  })
+
+  it("draws a quarter-max day above the linear level", () => {
+    // quarter-max: round(sqrt(0.25) * 6) = round(3) = 3 -> ▄ (linear: ▃)
+    expect(sparklineBlocks([4, 1, 4])).toBe("▇▄▇")
+  })
+})
+
+describe("compactAge", () => {
+  it("mirrors formatAge thresholds without the verbose wording", () => {
+    expect(compactAge(0)).toBe("now")
+    expect(compactAge(59_000)).toBe("now")
+    expect(compactAge(60_000)).toBe("1m")
+    expect(compactAge(38 * 60_000)).toBe("38m")
+    expect(compactAge(90 * 60_000)).toBe("1h")
+    expect(compactAge(2 * 60 * 60_000)).toBe("2h")
+    expect(compactAge(25 * 60 * 60_000)).toBe("1d")
+    expect(compactAge(3 * DAY_MS)).toBe("3d")
+  })
+})
+
+describe("todayLine (project today row + savings)", () => {
+  it("renders today's spend and positive savings", () => {
+    // formatUSDAdaptive: $4.196 (4 decimals <$1), $12.400 (3 decimals >= $1)
+    expect(todayLine(4.196, 12.4)).toBe(" Today $4.196 · saved $12.400")
+  })
+
+  it("omits the savings part when nothing was saved", () => {
+    expect(todayLine(0.5123, 0)).toBe(" Today $0.5123")
+  })
+
+  it("stays inside the 34-column budget at extreme values", () => {
+    // Widest adaptive renderings: today "$12345.67" (9 cells, >= $10000) and
+    // saved "$123456.78" (10 cells): 1+5+1+9+3+5+1+10 = 35 -> trimmed.
+    const line = todayLine(12345.67, 123456.78)
+    expect(line.length).toBeLessThanOrEqual(PANEL_WIDTH)
   })
 })
 

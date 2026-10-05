@@ -60,6 +60,21 @@ export function computeTokenCost(tokens: TokenUsage, entry: PriceEntry | undefin
   )
 }
 
+/**
+ * Cache discount of one usage record: what the cached tokens would have
+ * cost at the uncached input price, minus what they actually cost.
+ * Each component is clamped at >= 0 per component — a tier whose cache
+ * price exceeds the input price (cache writes on some models) contributes
+ * 0, never a negative saving. Unknown cache tiers price at 0, so cached
+ * tokens there save the full input price. A missing entry yields 0.
+ */
+export function computeTokenSavings(tokens: TokenUsage, entry: PriceEntry | undefined): number {
+  if (entry === undefined) return 0
+  const readSaving = tokens.cache.read * (entry.input - entry.cacheRead)
+  const writeSaving = tokens.cache.write * (entry.input - entry.cacheWrite)
+  return Math.max(0, readSaving) + Math.max(0, writeSaving)
+}
+
 export interface ModelUsage {
   /** `${providerID}/${modelID}` display key. */
   readonly key: string
@@ -121,6 +136,18 @@ export interface SessionUsage {
   readonly usages: readonly UsageInput[]
 }
 
+/** One non-root session in the family cost breakdown. */
+export interface SubagentItem {
+  readonly sessionID: string
+  /** Matched-model cost of this session. */
+  readonly usd: number
+}
+
+/** A subagent item with its session title resolved ("" when unknown). */
+export interface NamedSubagentItem extends SubagentItem {
+  readonly name: string
+}
+
 export interface FamilyReport {
   /** Family total in USD, matched models only. */
   readonly total: number
@@ -133,9 +160,40 @@ export interface FamilyReport {
     readonly count: number
     /** Matched-model cost of the non-root sessions. */
     readonly total: number
+    /** Per non-root session (including zero-cost ones), sorted by cost descending. */
+    readonly items: readonly SubagentItem[]
   }
+  /** Cache discount earned across the family (root + subagents). */
+  readonly cacheSaved: number
   /** Number of models without a LiteLLM price. */
   readonly unmatchedModels: number
+}
+
+/** Subagent breakdown with every item carrying a resolved session name. */
+export interface NamedFamilySubagents {
+  readonly count: number
+  readonly total: number
+  readonly items: readonly NamedSubagentItem[]
+}
+
+/** A FamilyReport whose subagent items carry resolved session titles. */
+export interface NamedFamilyReport extends Omit<FamilyReport, "subagents"> {
+  readonly subagents: NamedFamilySubagents
+}
+
+/**
+ * Resolve a display name onto every subagent item (resolver result; ""
+ * allowed when the session has no title). Pure: returns a new report,
+ * preserving item order, costs, and every other field.
+ */
+export function withSubagentNames(report: FamilyReport, resolve: (sessionID: string) => string): NamedFamilyReport {
+  return {
+    ...report,
+    subagents: {
+      ...report.subagents,
+      items: report.subagents.items.map((item) => ({ ...item, name: resolve(item.sessionID) })),
+    },
+  }
 }
 
 /**
@@ -145,10 +203,12 @@ export interface FamilyReport {
  */
 export function rollupFamily(sessions: readonly SessionUsage[], rootID: string, lookup: PriceLookupFn): FamilyReport {
   let total = 0
+  let cacheSaved = 0
   let subagentCount = 0
   let subagentTotal = 0
   let tokens = emptyUsage()
   const all: UsageInput[] = []
+  const subagentItems: SubagentItem[] = []
   for (const session of sessions) {
     let sessionTotal = 0
     for (const usage of session.usages) {
@@ -156,19 +216,23 @@ export function rollupFamily(sessions: readonly SessionUsage[], rootID: string, 
       tokens = addUsage(tokens, usage.tokens)
       const entry = lookup(usage.model.providerID, usage.model.id)
       sessionTotal += computeTokenCost(usage.tokens, entry)
+      cacheSaved += computeTokenSavings(usage.tokens, entry)
     }
     total += sessionTotal
     if (session.sessionID !== rootID) {
       subagentCount++
       subagentTotal += sessionTotal
+      subagentItems.push({ sessionID: session.sessionID, usd: sessionTotal })
     }
   }
+  subagentItems.sort((a, b) => b.usd - a.usd)
   const models = aggregateModels(all, lookup)
   return {
     total,
     models,
     tokens,
-    subagents: { count: subagentCount, total: subagentTotal },
+    subagents: { count: subagentCount, total: subagentTotal, items: subagentItems },
+    cacheSaved,
     unmatchedModels: models.filter((row) => !row.matched).length,
   }
 }

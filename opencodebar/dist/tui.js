@@ -9,6 +9,13 @@ function computeTokenCost(tokens, entry, options = {}) {
   const output = options.includeReasoning === false ? tokens.output : tokens.output + tokens.reasoning;
   return tokens.input * entry.input + output * entry.output + tokens.cache.read * entry.cacheRead + tokens.cache.write * entry.cacheWrite;
 }
+function computeTokenSavings(tokens, entry) {
+  if (entry === undefined)
+    return 0;
+  const readSaving = tokens.cache.read * (entry.input - entry.cacheRead);
+  const writeSaving = tokens.cache.write * (entry.input - entry.cacheWrite);
+  return Math.max(0, readSaving) + Math.max(0, writeSaving);
+}
 function emptyUsage() {
   return { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
 }
@@ -47,12 +54,23 @@ function aggregateModels(usages, lookup) {
     return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
   });
 }
+function withSubagentNames(report, resolve) {
+  return {
+    ...report,
+    subagents: {
+      ...report.subagents,
+      items: report.subagents.items.map((item) => ({ ...item, name: resolve(item.sessionID) }))
+    }
+  };
+}
 function rollupFamily(sessions, rootID, lookup) {
   let total = 0;
+  let cacheSaved = 0;
   let subagentCount = 0;
   let subagentTotal = 0;
   let tokens = emptyUsage();
   const all = [];
+  const subagentItems = [];
   for (const session of sessions) {
     let sessionTotal = 0;
     for (const usage of session.usages) {
@@ -60,19 +78,23 @@ function rollupFamily(sessions, rootID, lookup) {
       tokens = addUsage(tokens, usage.tokens);
       const entry = lookup(usage.model.providerID, usage.model.id);
       sessionTotal += computeTokenCost(usage.tokens, entry);
+      cacheSaved += computeTokenSavings(usage.tokens, entry);
     }
     total += sessionTotal;
     if (session.sessionID !== rootID) {
       subagentCount++;
       subagentTotal += sessionTotal;
+      subagentItems.push({ sessionID: session.sessionID, usd: sessionTotal });
     }
   }
+  subagentItems.sort((a, b) => b.usd - a.usd);
   const models = aggregateModels(all, lookup);
   return {
     total,
     models,
     tokens,
-    subagents: { count: subagentCount, total: subagentTotal },
+    subagents: { count: subagentCount, total: subagentTotal, items: subagentItems },
+    cacheSaved,
     unmatchedModels: models.filter((row) => !row.matched).length
   };
 }
@@ -300,7 +322,17 @@ function sparklineBlocks(days) {
   const max = days.reduce((highest, value) => Math.max(highest, value), 0);
   if (max <= 0)
     return " ".repeat(days.length);
-  return days.map((value) => value <= 0 ? " " : SPARK_RAMP[Math.round(value / max * (SPARK_RAMP.length - 1))]).join("");
+  return days.map((value) => value <= 0 ? " " : SPARK_RAMP[Math.round(Math.sqrt(value / max) * (SPARK_RAMP.length - 1))]).join("");
+}
+function compactAge(ageMs) {
+  const ms = Math.max(0, ageMs);
+  if (ms < 60000)
+    return "now";
+  if (ms < 60 * 60000)
+    return `${Math.floor(ms / 60000)}m`;
+  if (ms < 24 * 60 * 60000)
+    return `${Math.floor(ms / (60 * 60000))}h`;
+  return `${Math.floor(ms / (24 * 60 * 60000))}d`;
 }
 function heartbeatFooter(body, revision, width = PANEL_WIDTH) {
   const heartbeat = ` · r${revision}`;
@@ -312,6 +344,12 @@ function formatUSDAdaptive(amount) {
   if (amount >= 1)
     return formatUSD(amount, 3);
   return formatUSD(amount, 4);
+}
+function todayLine(todayUsd, savedUsd) {
+  const head = ` Today ${formatUSDAdaptive(todayUsd)}`;
+  if (savedUsd <= 0)
+    return head;
+  return truncateWithEllipsis(`${head} · saved ${formatUSDAdaptive(savedUsd)}`, PANEL_WIDTH);
 }
 function billedOutput(tokens) {
   return tokens.output + tokens.reasoning;
@@ -326,6 +364,10 @@ import { jsxDEV } from "@opentui/solid/jsx-dev-runtime";
 function shortModelName(modelID) {
   const slash = modelID.lastIndexOf("/");
   return slash === -1 ? modelID : modelID.slice(slash + 1);
+}
+function shortSessionID(sessionID) {
+  const bare = sessionID.startsWith("ses_") ? sessionID.slice(4) : sessionID;
+  return bare.slice(0, 8);
 }
 function CostPanel(props) {
   const report = createMemo(() => {
@@ -375,6 +417,13 @@ function CostPanel(props) {
           children: `${" ".repeat(DETENT + 1)}${tokenDetail(report().tokens)}`
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV(Show, {
+          when: report().cacheSaved > 0,
+          children: /* @__PURE__ */ jsxDEV("text", {
+            fg: props.theme.muted,
+            children: `${" ".repeat(DETENT + 1)}↺ saved ${formatUSDAdaptive(report().cacheSaved)}`
+          }, undefined, false, undefined, this)
+        }, undefined, false, undefined, this),
+        /* @__PURE__ */ jsxDEV(Show, {
           when: errors().family !== "" && report().models.length === 0 && report().total === 0,
           children: /* @__PURE__ */ jsxDEV("text", {
             fg: props.theme.warning,
@@ -409,10 +458,21 @@ function CostPanel(props) {
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV(Show, {
           when: report().subagents.count > 0,
-          children: /* @__PURE__ */ jsxDEV("text", {
-            fg: props.theme.muted,
-            children: `${" ".repeat(DETENT)}· subagents (${report().subagents.count}): ${formatUSDAdaptive(report().subagents.total)}`
-          }, undefined, false, undefined, this)
+          children: /* @__PURE__ */ jsxDEV("box", {
+            children: [
+              /* @__PURE__ */ jsxDEV("text", {
+                fg: props.theme.muted,
+                children: `${" ".repeat(DETENT)}· subagents (${report().subagents.count}): ${formatUSDAdaptive(report().subagents.total)}`
+              }, undefined, false, undefined, this),
+              /* @__PURE__ */ jsxDEV(For, {
+                each: report().subagents.items.filter((item) => item.usd > 0).slice(0, 4),
+                children: (item) => /* @__PURE__ */ jsxDEV("text", {
+                  fg: props.theme.muted,
+                  children: `${" ".repeat(DETENT + 1)}${panelRow(item.name !== "" ? item.name : shortSessionID(item.sessionID), formatUSDAdaptive(item.usd), NAME_MAX)}`
+                }, undefined, false, undefined, this)
+              }, undefined, false, undefined, this)
+            ]
+          }, undefined, true, undefined, this)
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV("text", {
           fg: props.theme.text,
@@ -420,10 +480,18 @@ function CostPanel(props) {
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV(Show, {
           when: project().state === "ok" && project().total > 0,
-          children: /* @__PURE__ */ jsxDEV("text", {
-            fg: props.theme.muted,
-            children: `7d ${sparklineBlocks(project().days)}`
-          }, undefined, false, undefined, this)
+          children: /* @__PURE__ */ jsxDEV("box", {
+            children: [
+              /* @__PURE__ */ jsxDEV("text", {
+                fg: props.theme.muted,
+                children: todayLine(project().days[6] ?? 0, project().saved)
+              }, undefined, false, undefined, this),
+              /* @__PURE__ */ jsxDEV("text", {
+                fg: props.theme.muted,
+                children: `7d ${sparklineBlocks(project().days)}`
+              }, undefined, false, undefined, this)
+            ]
+          }, undefined, true, undefined, this)
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV(Show, {
           when: project().state === "error",
@@ -436,7 +504,7 @@ function CostPanel(props) {
           when: prices().state === "error" || prices().state === "unavailable",
           fallback: /* @__PURE__ */ jsxDEV("text", {
             fg: props.theme.muted,
-            children: heartbeatFooter(project().state === "ok" && project().sessionCount > 0 ? `${project().sessionCount} sessions · ${prices().label}` : prices().label, props.ctrl.revision())
+            children: heartbeatFooter(prices().state === "loading" ? prices().label : `${project().state === "ok" && project().sessionCount > 0 ? `${project().sessionCount} ses · ` : ""}prices ${compactAge(prices().ageMs)}`, props.ctrl.revision())
           }, undefined, false, undefined, this),
           children: /* @__PURE__ */ jsxDEV("text", {
             fg: props.theme.warning,
@@ -510,14 +578,14 @@ var tui_default = Plugin.define({
     function priceStatus() {
       const entryCount = Object.keys(prices.entries).length;
       if (entryCount === 0 && priceFetch !== undefined)
-        return { state: "loading", label: "prices: loading" };
+        return { state: "loading", label: "prices: loading", ageMs: 0 };
       if (entryCount === 0 && prices.error !== "") {
-        return { state: "unavailable", label: `prices: unavailable (${prices.error})` };
+        return { state: "unavailable", label: `prices: unavailable (${prices.error})`, ageMs: 0 };
       }
       if (prices.error !== "") {
-        return { state: "error", label: `prices: fetch failed, cache ${formatAge(Date.now() - prices.fetchedAt)}` };
+        return { state: "error", label: `prices: fetch failed, cache ${formatAge(Date.now() - prices.fetchedAt)}`, ageMs: 0 };
       }
-      return { state: "ok", label: `prices: ${formatAge(Date.now() - prices.fetchedAt)}` };
+      return { state: "ok", label: `prices: ${formatAge(Date.now() - prices.fetchedAt)}`, ageMs: Date.now() - prices.fetchedAt };
     }
     const [revision, setRevision] = createSignal(0);
     const bump = () => setRevision((value) => value + 1);
@@ -562,7 +630,7 @@ var tui_default = Plugin.define({
       const family = context.data.session.family(sessionID);
       for (const id of family)
         scheduleUsages(id);
-      return rollupFamily(family.map((id) => ({ sessionID: id, usages: familyUsages.get(id)?.usages ?? [] })), rootID, lookup);
+      return withSubagentNames(rollupFamily(family.map((id) => ({ sessionID: id, usages: familyUsages.get(id)?.usages ?? [] })), rootID, lookup), (id) => context.data.session.get(id)?.title ?? "");
     }
     let directoryCache;
     let directoryFetch;
@@ -634,18 +702,23 @@ var tui_default = Plugin.define({
       }
       const days = [0, 0, 0, 0, 0, 0, 0];
       let total = 0;
+      let saved = 0;
       const queue = [...inWindow];
       const workers = Array.from({ length: Math.min(PROJECT_FETCH_CONCURRENCY, queue.length) }, async () => {
         for (let session = queue.shift();session !== undefined; session = queue.shift()) {
           try {
             const messages = await context.client.session.context({ sessionID: session.id });
             let sessionTotal = 0;
+            let sessionSaved = 0;
             for (const message of messages) {
               if (message.type !== "assistant" || message.tokens === undefined)
                 continue;
-              sessionTotal += computeTokenCost(message.tokens, lookup(message.model.providerID, message.model.id));
+              const entry = lookup(message.model.providerID, message.model.id);
+              sessionTotal += computeTokenCost(message.tokens, entry);
+              sessionSaved += computeTokenSavings(message.tokens, entry);
             }
             total += sessionTotal;
+            saved += sessionSaved;
             const daysAgo = localDaysAgo(session.created, now);
             if (daysAgo >= 0 && daysAgo <= 6) {
               const slot = 6 - daysAgo;
@@ -655,7 +728,7 @@ var tui_default = Plugin.define({
         }
       });
       await Promise.all(workers);
-      return { total, sessions: inWindow.length, days };
+      return { total, sessions: inWindow.length, days, saved };
     }
     function ensureProjectTotal(projectID, sessionDirectory) {
       const cached = projectCache;
@@ -671,7 +744,8 @@ var tui_default = Plugin.define({
             dirty: false,
             total: result.total,
             sessions: result.sessions,
-            days: result.days
+            days: result.days,
+            saved: result.saved
           };
           projectError = "";
           bump();
@@ -683,15 +757,15 @@ var tui_default = Plugin.define({
     function projectTotal(sessionID) {
       const session = context.data.session.get(sessionID);
       if (session === undefined)
-        return { state: "loading", total: 0, sessionCount: 0, days: [], message: "" };
+        return { state: "loading", total: 0, sessionCount: 0, days: [], saved: 0, message: "" };
       ensureProjectTotal(session.projectID, session.location.directory);
       const cached = projectCache;
       if (cached !== undefined && cached.projectID === session.projectID) {
-        return { state: "ok", total: cached.total, sessionCount: cached.sessions, days: cached.days, message: "" };
+        return { state: "ok", total: cached.total, sessionCount: cached.sessions, days: cached.days, saved: cached.saved, message: "" };
       }
       if (projectError !== "")
-        return { state: "error", total: 0, sessionCount: 0, days: [], message: projectError };
-      return { state: "loading", total: 0, sessionCount: 0, days: [], message: "" };
+        return { state: "error", total: 0, sessionCount: 0, days: [], saved: 0, message: projectError };
+      return { state: "loading", total: 0, sessionCount: 0, days: [], saved: 0, message: "" };
     }
     function invalidateWorktrees() {
       directoryCache = undefined;

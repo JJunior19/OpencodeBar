@@ -79,18 +79,31 @@ const SPARK_RAMP = "▁▂▃▄▅▆▇"
 
 /**
  * Weekly timeline: one cell per input day (slot 0 = 6 days ago … last =
- * today). Each day maps to `round(value / max * 6)` on the ramp, so the
- * max day always renders `▇` and a half-max day the middle block; a zero
- * day renders a space. All-zero input renders one space per day; empty
- * input renders the empty string.
+ * today). Each day's level is `round(sqrt(value/max) * 6)` — a square-root
+ * curve, so the max day always renders `▇` while low-spend days read taller
+ * than a linear ramp would draw them and stay visible next to a spike. A
+ * zero day renders a space. All-zero input renders one space per day;
+ * empty input renders the empty string.
  */
 export function sparklineBlocks(days: readonly number[]): string {
   if (days.length === 0) return ""
   const max = days.reduce((highest, value) => Math.max(highest, value), 0)
   if (max <= 0) return " ".repeat(days.length)
   return days
-    .map((value) => (value <= 0 ? " " : SPARK_RAMP[Math.round((value / max) * (SPARK_RAMP.length - 1))]))
+    .map((value) => (value <= 0 ? " " : SPARK_RAMP[Math.round(Math.sqrt(value / max) * (SPARK_RAMP.length - 1))]))
     .join("")
+}
+
+/**
+ * Compact footer age: "now", "38m", "2h", "1d" — formatAge's thresholds
+ * without the verbose wording, sized for the crowded footer line.
+ */
+export function compactAge(ageMs: number): string {
+  const ms = Math.max(0, ageMs)
+  if (ms < 60_000) return "now"
+  if (ms < 60 * 60_000) return `${Math.floor(ms / 60_000)}m`
+  if (ms < 24 * 60 * 60_000) return `${Math.floor(ms / (60 * 60_000))}h`
+  return `${Math.floor(ms / (24 * 60 * 60_000))}d`
 }
 
 /**
@@ -112,6 +125,18 @@ export function formatUSDAdaptive(amount: number): string {
   if (amount >= 100) return formatUSD(amount, 2)
   if (amount >= 1) return formatUSD(amount, 3)
   return formatUSD(amount, 4)
+}
+
+/**
+ * Project "today" line: ` Today $X` plus ` · saved $Y` only when the
+ * savings are positive. Adaptive precision keeps typical rows compact; at
+ * extreme values the combined line is trimmed to the panel width (the
+ * widest case, today ≥ $10000 plus saved ≥ $100000, is 35 cells raw).
+ */
+export function todayLine(todayUsd: number, savedUsd: number): string {
+  const head = ` Today ${formatUSDAdaptive(todayUsd)}`
+  if (savedUsd <= 0) return head
+  return truncateWithEllipsis(`${head} · saved ${formatUSDAdaptive(savedUsd)}`, PANEL_WIDTH)
 }
 
 /** Billed-output token view: reasoning is part of output pricing. */

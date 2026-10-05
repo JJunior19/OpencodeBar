@@ -10,29 +10,36 @@
  *   ── OpencodeBar · API est. ──
  *   Session           $12.3456
  *    ↓ 250k · ↑ 60k · ↺ 9.5M
+ *    ↺ saved $1.03
  *   ! ctx: <family fetch error>…
  *     glm-5.3        ▇▇  50%    $9.876
  *      ↓ 1.2M · ↑ 340k · ↺ 8.1M
  *    · subagents (2): $0.432
+ *      explore-wor        $0.21
+ *      cost-panel         $0.19
  *   Project · 7d          $45.67
- *    7d ▁▂▄▅▆▇
+ *    Today $4.196 · saved $12.40
+ *    7d ▇▄▁
  *   ! <project total error>…
- *   38 sessions · prices: 2m old · r7
+ *   10 ses · prices 38m · r7
  *
  * The header renders `OpencodeBar` as a bold span (OpenTUI `<b>`); its
  * natural width (26 cells) can exceed the value-column edge but stays inside
  * the 34-column budget. The `7d ` sparkline under the project row shows one
- * block per local calendar day (6 days ago → today) of matched-model spend.
- * `!`/`! ctx:` warning lines appear only while the matching async fetch is
- * failing (project value: "…" while loading, "!" while erroring). The `r<N>`
- * footer heartbeat is the reactivity probe: N is the controller revision and
- * must advance across 30s ticks — a frozen N means the signal graph is dead.
- * Per-model row budget: 2 (detent) + 14 (name) + 7 (share zone) + 10
- * (value) = 33 cells.
+ * block per local calendar day (6 days ago → today) of matched-model spend,
+ * scaled by the square root of the day's share of the week's max so cheap
+ * days stay readable next to a spike; the ` Today` line above it carries
+ * today's spend plus the window's cache savings when positive. `!`/`! ctx:`
+ * warning lines appear only while the matching async fetch is failing
+ * (project value: "…" while loading, "!" while erroring). The `r<N>` footer
+ * heartbeat is the reactivity probe: N is the controller revision and must
+ * advance across 30s ticks — a frozen N means the signal graph is dead.
+ * Row budgets: per-model 2+14+7+10 = 33 cells; subagent item 3+14+10 = 27
+ * cells (top 4 by cost, positive only); the today line trims itself to 34.
  */
 import type { RGBA } from "@opentui/core"
 import { For, Show, createMemo } from "solid-js"
-import { formatUSD, type FamilyReport, type ModelUsage } from "./cost"
+import { formatUSD, type ModelUsage, type NamedFamilyReport } from "./cost"
 import {
   DETENT,
   NAME_MAX,
@@ -40,6 +47,7 @@ import {
   PANEL_WIDTH,
   SHARE_ZONE_WIDTH,
   VALUE_WIDTH,
+  compactAge,
   fitLabel,
   formatUSDAdaptive,
   heartbeatFooter,
@@ -47,6 +55,7 @@ import {
   sectionHeaderParts,
   shareBar,
   sparklineBlocks,
+  todayLine,
   tokenDetail,
   truncateWithEllipsis,
 } from "./format"
@@ -54,6 +63,8 @@ import {
 export interface PriceStatusView {
   readonly state: "loading" | "ok" | "error" | "unavailable"
   readonly label: string
+  /** Price-cache age in ms; 0 while loading, erroring, or unavailable. */
+  readonly ageMs: number
 }
 
 export interface ProjectTotalView {
@@ -62,6 +73,8 @@ export interface ProjectTotalView {
   readonly sessionCount: number
   /** Spend per local calendar day, oldest first (slot 0 = 6 days ago); [] unless state is "ok". */
   readonly days: readonly number[]
+  /** Cache savings across the project window; 0 while loading or erroring. */
+  readonly saved: number
   /** Last failure message; "" unless state is "error". */
   readonly message: string
 }
@@ -70,8 +83,8 @@ export interface ProjectTotalView {
 export interface PanelController {
   /** Bumped whenever cached session data may have changed. */
   revision(): number
-  /** Cost report for the selected session's whole family. */
-  sessionReport(sessionID: string): FamilyReport
+  /** Cost report for the selected session's family (subagent names resolved). */
+  sessionReport(sessionID: string): NamedFamilyReport
   /** 7-day project total for the selected session's project (may trigger an async recompute). */
   projectTotal(sessionID: string): ProjectTotalView
   /** Price cache status for the footer line. */
@@ -90,6 +103,12 @@ export interface CostPanelTheme {
 function shortModelName(modelID: string): string {
   const slash = modelID.lastIndexOf("/")
   return slash === -1 ? modelID : modelID.slice(slash + 1)
+}
+
+/** Fallback label for a subagent whose title has not resolved yet: the id body's first 8 chars. */
+function shortSessionID(sessionID: string): string {
+  const bare = sessionID.startsWith("ses_") ? sessionID.slice(4) : sessionID
+  return bare.slice(0, 8)
 }
 
 export function CostPanel(props: {
@@ -135,6 +154,9 @@ export function CostPanel(props: {
         <text fg={props.theme.text}>{headerParts()[0]}<b>{headerParts()[1]}</b>{headerParts()[2]}</text>
         <text fg={props.theme.text}>{panelRow("Session", formatUSDAdaptive(report().total), rowLabelWidth())}</text>
         <text fg={props.theme.muted}>{`${" ".repeat(DETENT + 1)}${tokenDetail(report().tokens)}`}</text>
+        <Show when={report().cacheSaved > 0}>
+          <text fg={props.theme.muted}>{`${" ".repeat(DETENT + 1)}↺ saved ${formatUSDAdaptive(report().cacheSaved)}`}</text>
+        </Show>
         <Show when={errors().family !== "" && report().models.length === 0 && report().total === 0}>
           <text fg={props.theme.warning}>{truncateWithEllipsis(`! ctx: ${errors().family}`, PANEL_WIDTH)}</text>
         </Show>
@@ -162,9 +184,18 @@ export function CostPanel(props: {
           }}
         </For>
         <Show when={report().subagents.count > 0}>
-          <text fg={props.theme.muted}>
-            {`${" ".repeat(DETENT)}· subagents (${report().subagents.count}): ${formatUSDAdaptive(report().subagents.total)}`}
-          </text>
+          <box>
+            <text fg={props.theme.muted}>
+              {`${" ".repeat(DETENT)}· subagents (${report().subagents.count}): ${formatUSDAdaptive(report().subagents.total)}`}
+            </text>
+            <For each={report().subagents.items.filter((item) => item.usd > 0).slice(0, 4)}>
+              {(item) => (
+                <text fg={props.theme.muted}>
+                  {`${" ".repeat(DETENT + 1)}${panelRow(item.name !== "" ? item.name : shortSessionID(item.sessionID), formatUSDAdaptive(item.usd), NAME_MAX)}`}
+                </text>
+              )}
+            </For>
+          </box>
         </Show>
         <text fg={props.theme.text}>
           {panelRow(
@@ -174,7 +205,10 @@ export function CostPanel(props: {
           )}
         </text>
         <Show when={project().state === "ok" && project().total > 0}>
-          <text fg={props.theme.muted}>{`7d ${sparklineBlocks(project().days)}`}</text>
+          <box>
+            <text fg={props.theme.muted}>{todayLine(project().days[6] ?? 0, project().saved)}</text>
+            <text fg={props.theme.muted}>{`7d ${sparklineBlocks(project().days)}`}</text>
+          </box>
         </Show>
         <Show when={project().state === "error"}>
           <text fg={props.theme.warning}>{truncateWithEllipsis(`! ${project().message}`, PANEL_WIDTH)}</text>
@@ -184,9 +218,9 @@ export function CostPanel(props: {
           fallback={
             <text fg={props.theme.muted}>
               {heartbeatFooter(
-                project().state === "ok" && project().sessionCount > 0
-                  ? `${project().sessionCount} sessions · ${prices().label}`
-                  : prices().label,
+                prices().state === "loading"
+                  ? prices().label
+                  : `${project().state === "ok" && project().sessionCount > 0 ? `${project().sessionCount} ses · ` : ""}prices ${compactAge(prices().ageMs)}`,
                 props.ctrl.revision(),
               )}
             </text>
