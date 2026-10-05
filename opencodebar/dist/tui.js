@@ -260,7 +260,7 @@ var NAME_MIN = 8;
 var NAME_MAX = 14;
 var DETENT = 2;
 function fitLabel(label, width) {
-  if (label.length >= width)
+  if (label.length > width)
     return label.slice(0, Math.max(0, width - 1)) + "…";
   return label.padEnd(width);
 }
@@ -272,18 +272,35 @@ function sectionHeader(title, width) {
   const right = Math.max(0, width - text.length - 2);
   return "──" + text + "─".repeat(right);
 }
+var HEADER_BRAND = "OpencodeBar";
+var HEADER_TITLE = `${HEADER_BRAND} · API est.`;
+function sectionHeaderParts(width) {
+  const full = sectionHeader(HEADER_TITLE, width);
+  const lead = full.slice(0, full.indexOf(HEADER_BRAND));
+  const tail = full.slice(lead.length + HEADER_BRAND.length);
+  return [lead, HEADER_BRAND, tail];
+}
 function truncateWithEllipsis(text, width) {
   if (text.length <= width)
     return text;
   return text.slice(0, Math.max(0, width - 1)) + "…";
 }
 function shareBar(usd, totalUsd, contenders) {
-  if (contenders < 2 || totalUsd <= 0)
+  if (contenders < 1 || totalUsd <= 0)
     return "";
   const share = usd / totalUsd;
   const filled = Math.max(1, Math.round(share * SHARE_BAR_CELLS));
   const percent = Math.round(share * 100);
   return "▇".repeat(Math.min(SHARE_BAR_CELLS, filled)).padEnd(SHARE_BAR_CELLS) + `${percent}%`.padStart(SHARE_ZONE_WIDTH - SHARE_BAR_CELLS);
+}
+var SPARK_RAMP = "▁▂▃▄▅▆▇";
+function sparklineBlocks(days) {
+  if (days.length === 0)
+    return "";
+  const max = days.reduce((highest, value) => Math.max(highest, value), 0);
+  if (max <= 0)
+    return " ".repeat(days.length);
+  return days.map((value) => value <= 0 ? " " : SPARK_RAMP[Math.round(value / max * (SPARK_RAMP.length - 1))]).join("");
 }
 function heartbeatFooter(body, revision, width = PANEL_WIDTH) {
   const heartbeat = ` · r${revision}`;
@@ -333,6 +350,7 @@ function CostPanel(props) {
   const rowLabelWidth = createMemo(() => {
     return Math.max("Project · 7d".length, DETENT + nameWidth());
   });
+  const headerParts = createMemo(() => sectionHeaderParts(rowLabelWidth() + VALUE_WIDTH));
   const barContenders = createMemo(() => report().models.filter((model) => model.matched && model.usd > 0).length);
   return /* @__PURE__ */ jsxDEV(Show, {
     when: props.sessionID !== "",
@@ -340,8 +358,14 @@ function CostPanel(props) {
       children: [
         /* @__PURE__ */ jsxDEV("text", {
           fg: props.theme.text,
-          children: sectionHeader("Cost · API est.", rowLabelWidth() + VALUE_WIDTH)
-        }, undefined, false, undefined, this),
+          children: [
+            headerParts()[0],
+            /* @__PURE__ */ jsxDEV("b", {
+              children: headerParts()[1]
+            }, undefined, false, undefined, this),
+            headerParts()[2]
+          ]
+        }, undefined, true, undefined, this),
         /* @__PURE__ */ jsxDEV("text", {
           fg: props.theme.text,
           children: panelRow("Session", formatUSDAdaptive(report().total), rowLabelWidth())
@@ -393,6 +417,13 @@ function CostPanel(props) {
         /* @__PURE__ */ jsxDEV("text", {
           fg: props.theme.text,
           children: panelRow("Project · 7d", project().state === "ok" ? formatUSD(project().total, 2) : project().state === "error" ? "!" : "…", rowLabelWidth())
+        }, undefined, false, undefined, this),
+        /* @__PURE__ */ jsxDEV(Show, {
+          when: project().state === "ok" && project().total > 0,
+          children: /* @__PURE__ */ jsxDEV("text", {
+            fg: props.theme.muted,
+            children: `7d ${sparklineBlocks(project().days)}`
+          }, undefined, false, undefined, this)
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV(Show, {
           when: project().state === "error",
@@ -564,9 +595,17 @@ var tui_default = Plugin.define({
     let projectCache;
     let projectCompute;
     let projectError = "";
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+    function localDaysAgo(createdMs, nowMs) {
+      const created = new Date(createdMs);
+      created.setHours(0, 0, 0, 0);
+      const today = new Date(nowMs);
+      today.setHours(0, 0, 0, 0);
+      return Math.round((today.getTime() - created.getTime()) / MS_PER_DAY);
+    }
     async function computeProjectTotal(directories) {
       const now = Date.now();
-      const sessionIDs = [];
+      const inWindow = [];
       const seen = new Set;
       for (const directory of directories) {
         let cursor;
@@ -579,13 +618,13 @@ var tui_default = Plugin.define({
             cursor
           });
           for (const session of page.data) {
-            if (shouldStopProjectPagination(session.time.created, now, sessionIDs.length)) {
+            if (shouldStopProjectPagination(session.time.created, now, inWindow.length)) {
               stop = true;
               break;
             }
             if (isInProjectWindow(session.time.created, now) && !seen.has(session.id)) {
               seen.add(session.id);
-              sessionIDs.push(session.id);
+              inWindow.push({ id: session.id, created: session.time.created });
             }
           }
           cursor = page.cursor.next ?? undefined;
@@ -593,22 +632,30 @@ var tui_default = Plugin.define({
             break;
         }
       }
+      const days = [0, 0, 0, 0, 0, 0, 0];
       let total = 0;
-      const queue = [...sessionIDs];
+      const queue = [...inWindow];
       const workers = Array.from({ length: Math.min(PROJECT_FETCH_CONCURRENCY, queue.length) }, async () => {
-        for (let id = queue.shift();id !== undefined; id = queue.shift()) {
+        for (let session = queue.shift();session !== undefined; session = queue.shift()) {
           try {
-            const messages = await context.client.session.context({ sessionID: id });
+            const messages = await context.client.session.context({ sessionID: session.id });
+            let sessionTotal = 0;
             for (const message of messages) {
               if (message.type !== "assistant" || message.tokens === undefined)
                 continue;
-              total += computeTokenCost(message.tokens, lookup(message.model.providerID, message.model.id));
+              sessionTotal += computeTokenCost(message.tokens, lookup(message.model.providerID, message.model.id));
+            }
+            total += sessionTotal;
+            const daysAgo = localDaysAgo(session.created, now);
+            if (daysAgo >= 0 && daysAgo <= 6) {
+              const slot = 6 - daysAgo;
+              days[slot] = (days[slot] ?? 0) + sessionTotal;
             }
           } catch {}
         }
       });
       await Promise.all(workers);
-      return { total, sessions: sessionIDs.length };
+      return { total, sessions: inWindow.length, days };
     }
     function ensureProjectTotal(projectID, sessionDirectory) {
       const cached = projectCache;
@@ -618,7 +665,14 @@ var tui_default = Plugin.define({
       }
       if (projectCompute === undefined) {
         projectCompute = resolveDirectories(projectID, sessionDirectory).then((directories) => computeProjectTotal(directories)).then((result) => {
-          projectCache = { projectID, computedAt: Date.now(), dirty: false, total: result.total, sessions: result.sessions };
+          projectCache = {
+            projectID,
+            computedAt: Date.now(),
+            dirty: false,
+            total: result.total,
+            sessions: result.sessions,
+            days: result.days
+          };
           projectError = "";
           bump();
         }).catch((error) => {
@@ -629,15 +683,15 @@ var tui_default = Plugin.define({
     function projectTotal(sessionID) {
       const session = context.data.session.get(sessionID);
       if (session === undefined)
-        return { state: "loading", total: 0, sessionCount: 0, message: "" };
+        return { state: "loading", total: 0, sessionCount: 0, days: [], message: "" };
       ensureProjectTotal(session.projectID, session.location.directory);
       const cached = projectCache;
       if (cached !== undefined && cached.projectID === session.projectID) {
-        return { state: "ok", total: cached.total, sessionCount: cached.sessions, message: "" };
+        return { state: "ok", total: cached.total, sessionCount: cached.sessions, days: cached.days, message: "" };
       }
       if (projectError !== "")
-        return { state: "error", total: 0, sessionCount: 0, message: projectError };
-      return { state: "loading", total: 0, sessionCount: 0, message: "" };
+        return { state: "error", total: 0, sessionCount: 0, days: [], message: projectError };
+      return { state: "loading", total: 0, sessionCount: 0, days: [], message: "" };
     }
     function invalidateWorktrees() {
       directoryCache = undefined;

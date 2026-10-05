@@ -14,22 +14,29 @@ public per-token pricing, cached locally with a 24h refresh.
 For the selected session (including every subagent session in its family):
 
 ```
-── Cost · API est. ──────────
+── OpencodeBar · API est. 
 Session           $0.1234
  ↓ 250k · ↑ 60k · ↺ 9.5M
   claude-sonnet… ▇▇  67%     $0.082
   gpt-5-mini     ▇    8%     $0.010
-  internal-model        no price
+  internal-model ▇    0% no price
  · subagents (2): $0.031
 Project · 7d          $12.34
+ 7d ▁▂▄▅▆▇
 38 sessions · prices: 2h old · r17
 ```
 
+- **Header** — the `OpencodeBar` brand renders bold (OpenTUI `<b>` span),
+  followed by `· API est.` in the normal weight. The header's natural width
+  (26 cells) can extend past the value column but stays inside the 34-column
+  sidebar budget.
 - **Session (API est.)** — family total, matched models only. Money values
   use adaptive precision: 2 decimals from $100, 3 from $1, 4 below.
-- One line per model, merged across the family, sorted by cost. With two or
-  more priced models, each line carries a 7-cell share zone — a 3-cell `▇`
-  bar plus the model's integer percent of the family total (e.g. `▇▇  67%`).
+- One line per model, merged across the family, sorted by cost. Whenever the
+  family total is positive and at least one model is priced, each line
+  carries a 7-cell share zone — a 3-cell `▇` bar plus the model's integer
+  percent of the family total (e.g. `▇▇  67%`). The common single-model
+  session shows a full `▇▇▇100%` zone.
 - Models without a LiteLLM price are listed with a `no price` marker.
   Prices are never guessed; they are excluded from totals.
 - **Subagents (N)** — appears only when the family has subagent sessions.
@@ -39,6 +46,10 @@ Project · 7d          $12.34
   shows the full project history; recompute follows `worktree.updated` /
   `worktree.resolved` events. Value is `…` while loading, `!` when the fetch
   failed (with a `! <message>` warning line under it).
+- **7d sparkline** — under the project row (once the total is positive): one
+  block per local calendar day, oldest (6 days ago) to today. Block height is
+  that day's matched-model spend relative to the week's max; a zero-spend day
+  renders a space.
 - Footer — session count, price cache age or a fetch failure notice, and the
   `r<N>` reactivity heartbeat. Every row stays inside the 34-column sidebar
   budget; messages are truncated with an ellipsis to fit.

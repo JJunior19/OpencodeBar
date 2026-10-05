@@ -223,6 +223,7 @@ export default Plugin.define({
       dirty: boolean
       total: number
       sessions: number
+      days: number[]
     }
 
     let projectCache: ProjectCache | undefined
@@ -231,9 +232,23 @@ export default Plugin.define({
     // Diagnostic only — control flow still swallows the rejection.
     let projectError = ""
 
-    async function computeProjectTotal(directories: readonly string[]): Promise<{ total: number; sessions: number }> {
+    const MS_PER_DAY = 24 * 60 * 60 * 1000
+
+    /** Local calendar-day distance: midnights between the two instants. */
+    function localDaysAgo(createdMs: number, nowMs: number): number {
+      const created = new Date(createdMs)
+      created.setHours(0, 0, 0, 0)
+      const today = new Date(nowMs)
+      today.setHours(0, 0, 0, 0)
+      // Round: DST shifts make midnight-to-midnight 23h/25h long.
+      return Math.round((today.getTime() - created.getTime()) / MS_PER_DAY)
+    }
+
+    async function computeProjectTotal(
+      directories: readonly string[],
+    ): Promise<{ total: number; sessions: number; days: number[] }> {
       const now = Date.now()
-      const sessionIDs: string[] = []
+      const inWindow: { id: string; created: number }[] = []
       const seen = new Set<string>()
       for (const directory of directories) {
         let cursor: string | undefined
@@ -246,13 +261,13 @@ export default Plugin.define({
             cursor,
           })
           for (const session of page.data) {
-            if (shouldStopProjectPagination(session.time.created, now, sessionIDs.length)) {
+            if (shouldStopProjectPagination(session.time.created, now, inWindow.length)) {
               stop = true
               break
             }
             if (isInProjectWindow(session.time.created, now) && !seen.has(session.id)) {
               seen.add(session.id)
-              sessionIDs.push(session.id)
+              inWindow.push({ id: session.id, created: session.time.created })
             }
           }
           cursor = page.cursor.next ?? undefined
@@ -260,18 +275,30 @@ export default Plugin.define({
         }
       }
 
+      // Weekly timeline buckets: slot 0 = 6 local-calendar days ago …
+      // slot 6 = today, keyed by each session's creation day.
+      const days = [0, 0, 0, 0, 0, 0, 0]
       let total = 0
-      const queue = [...sessionIDs]
+      const queue = [...inWindow]
       const workers = Array.from({ length: Math.min(PROJECT_FETCH_CONCURRENCY, queue.length) }, async () => {
-        for (let id = queue.shift(); id !== undefined; id = queue.shift()) {
+        for (let session = queue.shift(); session !== undefined; session = queue.shift()) {
           try {
-            const messages = await context.client.session.context({ sessionID: id })
+            const messages = await context.client.session.context({ sessionID: session.id })
+            let sessionTotal = 0
             for (const message of messages) {
               if (message.type !== "assistant" || message.tokens === undefined) continue
-              total += computeTokenCost(
+              sessionTotal += computeTokenCost(
                 message.tokens,
                 lookup(message.model.providerID, message.model.id),
               )
+            }
+            total += sessionTotal
+            const daysAgo = localDaysAgo(session.created, now)
+            // The rolling 7*24h window can still catch a session created 7
+            // calendar days ago (edge hours); only in-range days bucket.
+            if (daysAgo >= 0 && daysAgo <= 6) {
+              const slot = 6 - daysAgo
+              days[slot] = (days[slot] ?? 0) + sessionTotal
             }
           } catch {
             // A single unreadable session must not sink the project total.
@@ -279,7 +306,7 @@ export default Plugin.define({
         }
       })
       await Promise.all(workers)
-      return { total, sessions: sessionIDs.length }
+      return { total, sessions: inWindow.length, days }
     }
 
     function ensureProjectTotal(projectID: string, sessionDirectory: string): void {
@@ -292,7 +319,14 @@ export default Plugin.define({
         projectCompute = resolveDirectories(projectID, sessionDirectory)
           .then((directories) => computeProjectTotal(directories))
           .then((result) => {
-            projectCache = { projectID, computedAt: Date.now(), dirty: false, total: result.total, sessions: result.sessions }
+            projectCache = {
+              projectID,
+              computedAt: Date.now(),
+              dirty: false,
+              total: result.total,
+              sessions: result.sessions,
+              days: result.days,
+            }
             projectError = ""
             bump()
           })
@@ -308,16 +342,16 @@ export default Plugin.define({
       // Key by the session's project (root + worktrees share one projectID)
       // and keep the directory as the pagination filter and safety net.
       const session = context.data.session.get(sessionID)
-      if (session === undefined) return { state: "loading", total: 0, sessionCount: 0, message: "" }
+      if (session === undefined) return { state: "loading", total: 0, sessionCount: 0, days: [], message: "" }
       ensureProjectTotal(session.projectID, session.location.directory)
       const cached = projectCache
       if (cached !== undefined && cached.projectID === session.projectID) {
-        return { state: "ok", total: cached.total, sessionCount: cached.sessions, message: "" }
+        return { state: "ok", total: cached.total, sessionCount: cached.sessions, days: cached.days, message: "" }
       }
       // The last error wins over loading: keep showing it while a retry is
       // in flight, until a success replaces it.
-      if (projectError !== "") return { state: "error", total: 0, sessionCount: 0, message: projectError }
-      return { state: "loading", total: 0, sessionCount: 0, message: "" }
+      if (projectError !== "") return { state: "error", total: 0, sessionCount: 0, days: [], message: projectError }
+      return { state: "loading", total: 0, sessionCount: 0, days: [], message: "" }
     }
 
     // ----- events, tick, slash command, slot -----

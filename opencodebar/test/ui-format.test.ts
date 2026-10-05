@@ -11,7 +11,9 @@ import {
   heartbeatFooter,
   panelRow,
   sectionHeader,
+  sectionHeaderParts,
   shareBar,
+  sparklineBlocks,
   tokenDetail,
   truncateWithEllipsis,
 } from "../src/format"
@@ -19,6 +21,11 @@ import {
 describe("fitLabel", () => {
   it("pads short labels to the target width", () => {
     expect(fitLabel("glm-5.3", 10)).toBe("glm-5.3   ")
+  })
+
+  it("passes an exact-width label through unchanged", () => {
+    expect(fitLabel("Project · 7d", 12)).toBe("Project · 7d")
+    expect(fitLabel("exact", 5)).toBe("exact")
   })
 
   it("truncates long labels with an ellipsis", () => {
@@ -66,9 +73,54 @@ describe("shareBar (share of family total)", () => {
     }
   })
 
-  it("returns empty without a meaningful comparison", () => {
-    expect(shareBar(10, 10, 1)).toBe("")
+  it("draws a full bar for the common single-model family", () => {
+    expect(shareBar(10, 10, 1)).toBe("▇▇▇100%")
+    expect(shareBar(10, 10, 1)).toHaveLength(SHARE_ZONE_WIDTH)
+  })
+
+  it("returns empty only when there is no positive total to share", () => {
+    expect(shareBar(0, 0, 1)).toBe("")
     expect(shareBar(0, 0, 2)).toBe("")
+    expect(shareBar(3, 0, 2)).toBe("")
+  })
+})
+
+describe("sparklineBlocks (weekly timeline)", () => {
+  it("renders nothing for empty input", () => {
+    expect(sparklineBlocks([])).toBe("")
+  })
+
+  it("renders one space per day when every value is zero", () => {
+    expect(sparklineBlocks([0, 0, 0, 0, 0, 0, 0])).toBe("       ")
+  })
+
+  it("maps a monotonic ramp across the block levels", () => {
+    expect(sparklineBlocks([1, 2, 3, 4, 5, 6, 7])).toBe("▂▃▄▄▅▆▇")
+  })
+
+  it("renders zero days as spaces around a single spike", () => {
+    expect(sparklineBlocks([0, 0, 9, 0, 0, 0, 0])).toBe("  ▇    ")
+  })
+
+  it("keeps the max day on the top block and a half-max day mid-ramp", () => {
+    expect(sparklineBlocks([8, 0, 4, 0, 8, 0, 0])).toBe("▇ ▄ ▇  ")
+    expect(sparklineBlocks([8, 0, 4, 0, 8, 0, 0])).toHaveLength(7)
+  })
+})
+
+describe("sectionHeaderParts (brand header segments)", () => {
+  it("splits the brand so the pieces reassemble the full header line", () => {
+    for (const width of [22, 26, 34]) {
+      const [lead, brand, tail] = sectionHeaderParts(width)
+      expect(brand).toBe("OpencodeBar")
+      expect(lead + brand + tail).toBe(sectionHeader("OpencodeBar · API est.", width))
+    }
+  })
+
+  it("keeps the brand header inside the panel budget at its natural width", () => {
+    const natural = sectionHeaderParts(0).join("")
+    expect(natural).toHaveLength(26)
+    expect(natural.length).toBeLessThanOrEqual(PANEL_WIDTH)
   })
 })
 

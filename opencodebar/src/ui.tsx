@@ -7,7 +7,7 @@
  * builders live in ./format (JSX-free, unit-tested).
  *
  * Layout contract (compact, sidebar-safe, ≤ 34 columns):
- *   ── Cost · API est. ──────────
+ *   ── OpencodeBar · API est. ──
  *   Session           $12.3456
  *    ↓ 250k · ↑ 60k · ↺ 9.5M
  *   ! ctx: <family fetch error>…
@@ -15,9 +15,14 @@
  *      ↓ 1.2M · ↑ 340k · ↺ 8.1M
  *    · subagents (2): $0.432
  *   Project · 7d          $45.67
+ *    7d ▁▂▄▅▆▇
  *   ! <project total error>…
  *   38 sessions · prices: 2m old · r7
  *
+ * The header renders `OpencodeBar` as a bold span (OpenTUI `<b>`); its
+ * natural width (26 cells) can exceed the value-column edge but stays inside
+ * the 34-column budget. The `7d ` sparkline under the project row shows one
+ * block per local calendar day (6 days ago → today) of matched-model spend.
  * `!`/`! ctx:` warning lines appear only while the matching async fetch is
  * failing (project value: "…" while loading, "!" while erroring). The `r<N>`
  * footer heartbeat is the reactivity probe: N is the controller revision and
@@ -39,8 +44,9 @@ import {
   formatUSDAdaptive,
   heartbeatFooter,
   panelRow,
-  sectionHeader,
+  sectionHeaderParts,
   shareBar,
+  sparklineBlocks,
   tokenDetail,
   truncateWithEllipsis,
 } from "./format"
@@ -54,6 +60,8 @@ export interface ProjectTotalView {
   readonly state: "loading" | "ok" | "error"
   readonly total: number
   readonly sessionCount: number
+  /** Spend per local calendar day, oldest first (slot 0 = 6 days ago); [] unless state is "ok". */
+  readonly days: readonly number[]
   /** Last failure message; "" unless state is "error". */
   readonly message: string
 }
@@ -117,12 +125,14 @@ export function CostPanel(props: {
     return Math.max("Project · 7d".length, DETENT + nameWidth())
   })
 
+  const headerParts = createMemo(() => sectionHeaderParts(rowLabelWidth() + VALUE_WIDTH))
+
   const barContenders = createMemo(() => report().models.filter((model) => model.matched && model.usd > 0).length)
 
   return (
     <Show when={props.sessionID !== ""}>
       <box>
-        <text fg={props.theme.text}>{sectionHeader("Cost · API est.", rowLabelWidth() + VALUE_WIDTH)}</text>
+        <text fg={props.theme.text}>{headerParts()[0]}<b>{headerParts()[1]}</b>{headerParts()[2]}</text>
         <text fg={props.theme.text}>{panelRow("Session", formatUSDAdaptive(report().total), rowLabelWidth())}</text>
         <text fg={props.theme.muted}>{`${" ".repeat(DETENT + 1)}${tokenDetail(report().tokens)}`}</text>
         <Show when={errors().family !== "" && report().models.length === 0 && report().total === 0}>
@@ -163,6 +173,9 @@ export function CostPanel(props: {
             rowLabelWidth(),
           )}
         </text>
+        <Show when={project().state === "ok" && project().total > 0}>
+          <text fg={props.theme.muted}>{`7d ${sparklineBlocks(project().days)}`}</text>
+        </Show>
         <Show when={project().state === "error"}>
           <text fg={props.theme.warning}>{truncateWithEllipsis(`! ${project().message}`, PANEL_WIDTH)}</text>
         </Show>
