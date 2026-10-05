@@ -97,6 +97,37 @@ pair (observability; style) on `feature/tui-improve`, no PR yet.
     muted `7d <blocks>` row under Project · 7d when ok && total > 0.
   - Route: delegated writer. RED 9 failed → GREEN 28/28 file scope;
     63 → 72 total. Typecheck clean, build 29.59 KB.
+- [ ] T5 — Readability + cache savings + subagent breakdown
+  (user-selected 2026-10-05; budget + theme-reactivity stay follow-ups).
+  - Legibility: (1) `Today` value on the project block from `days[6]`,
+    rendered as muted `Today $X · saved $Y` under `Project · 7d`
+    (saved part omitted when <= 0; line shown when ok && total > 0).
+    (2) `sparklineBlocks` level formula sqrt-scaled:
+    `round(sqrt(v/max) * 6)` — small days stop vanishing. (3) Compact
+    footer: `N ses · prices <compactAge>` (new `compactAge`: now/38m/
+    2h/1d); warning/unavailable footer keeps full label (diagnosis
+    beats brevity). `PriceStatusView` += `ageMs` so the UI can compact.
+  - Cache savings: additive `computeTokenSavings(tokens, entry)` in
+    cost.ts (saved = cr*(input-cr_price) + cw*(input-cw_price),
+    clamped >= 0, 0 for unmatched); wired into rollupFamily
+    (`FamilyReport.cacheSaved`) and the project scan
+    (`ProjectTotalView.saved`). Display: session `↺ saved $X` muted
+    line after token detail; project in the Today line.
+  - Subagent breakdown: `FamilyReport.subagents.items`
+    ({sessionID, usd}[] desc, pure/tested) + additive pure
+    `withSubagentNames(report, resolve)` injecting names; tui resolves
+    via `context.data.session.get(id)?.title ?? ""`; UI shows top 4
+    named items under the aggregate line (fitLabel 14, adaptive USD).
+  - CONSTRAINT AMENDMENT: cost.ts unlocked ADDITIVE-only (new exports
+    + subagents.items field; existing export semantics frozen).
+  - Route: delegated writer. TDD on all pure additions.
+- [x] T5 — SHIPPED. Commit `14b5901`. RED 15 failed → GREEN 85/85;
+  typecheck clean; build 32.94 KB. Parent spot check 85/85 + readback
+  (clamp math, items sort, additive-only verified). Writer decisions:
+  half-max renders ramp[4] (▅) per formula; footer loading keeps full
+  label (ageMs=0 would lie "now"); todayLine self-trims (worst case 35
+  cells); zero-usd subagent items kept for count invariant, filtered
+  in render. Pending: user live look.
 
 ## Verification of record
 
@@ -124,6 +155,10 @@ pair (observability; style) on `feature/tui-improve`, no PR yet.
   diff readback: bucketing slot guard, header parts, sparkline guard
   all correct). Pending: user restarts TUI to see bold header,
   single-model bar and 7d sparkline.
+- 2026-10-05 03:47: T5 committed `14b5901` (Today + savings + subagent
+  breakdown + sqrt sparkline + compact footer). Follow-ups kept open:
+  budget command, theme reactivity, managed-loader root cause, daily
+  burn attribution by message time.
 
 ## Next step
 
