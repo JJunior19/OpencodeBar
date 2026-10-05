@@ -160,6 +160,14 @@ pair (observability; style) on `feature/tui-improve`, no PR yet.
   budget command, theme reactivity, managed-loader root cause, daily
   burn attribution by message time.
 
+## Delivery record
+
+- PR #7 `feat/tui-improve` → `main`, single slice holding commits
+  `beaab35`, `2b3476f`, `866b96e`, `b810ca1`, `14b5901`, `96ad8cd`.
+  Links approved issue #6 (`status:approved`), label `type:feature`.
+  Branch renamed `feature/tui-improve` → `feat/tui-improve` before
+  first push (branch-pr naming rule).
+
 ## Next step
 
 User restarts the TUI and reads the panel: if `r<N>` advances but
