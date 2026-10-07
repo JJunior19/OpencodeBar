@@ -16,6 +16,7 @@ subagent, and per project.
 - **Session total** + **project total for the last 7 days**.
 - Prices from LiteLLM, refreshed once per day (stale cache kept on fetch failure).
 - Models without a LiteLLM price are shown honestly as `no price` — never guessed.
+- **Commands**: `/opencodebar refresh` forces a LiteLLM price refresh; `/opencodebar-doctor` diagnoses the panel through toasts (works even when the panel itself is frozen) — if the doctor's live session total is positive while the panel shows $0, the host's render is frozen, not the data.
 
 ## Install (global — all projects)
 

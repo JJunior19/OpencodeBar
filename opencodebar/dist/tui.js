@@ -813,6 +813,60 @@ var tui_default = Plugin.define({
                 }
                 bump();
               }
+            },
+            {
+              id: "opencodebar.doctor",
+              title: "opencodebar: doctor (diagnose panel)",
+              group: "opencodebar",
+              slash: { name: "opencodebar-doctor", arguments: true },
+              run: async (input) => {
+                const argument = (input ?? "").trim();
+                if (argument !== "") {
+                  context.ui.toast.show({ message: "Usage: /opencodebar-doctor", variant: "info" });
+                  return;
+                }
+                const entryCount = Object.keys(prices.entries).length;
+                const pricePart = entryCount === 0 ? "prices: none" : `prices: ${entryCount} models, ${formatAge(Date.now() - prices.fetchedAt)}`;
+                context.ui.toast.show({
+                  message: `opencodebar doctor · ${pricePart} · revision ${revision()}`,
+                  variant: "info"
+                });
+                if (viewedSessionID === "") {
+                  context.ui.toast.show({
+                    message: "opencodebar doctor · session: none viewed yet (open the panel first)",
+                    variant: "info"
+                  });
+                } else {
+                  try {
+                    const messages = await context.client.session.context({ sessionID: viewedSessionID });
+                    const billed = [];
+                    for (const message of messages) {
+                      if (message.type === "assistant" && message.tokens !== undefined) {
+                        billed.push({ model: message.model, tokens: message.tokens });
+                      }
+                    }
+                    const total = billed.reduce((sum, usage) => sum + computeTokenCost(usage.tokens, lookup(usage.model.providerID, usage.model.id)), 0);
+                    context.ui.toast.show({
+                      message: `opencodebar doctor · session ${viewedSessionID.slice(0, 8)}: ${messages.length} msgs, ${billed.length} with tokens, $${total.toFixed(4)} (live fetch)`,
+                      variant: "success"
+                    });
+                    context.ui.toast.show({
+                      message: `opencodebar doctor · panel cache: ${familyUsages.get(viewedSessionID)?.usages.length ?? 0} usages · familyErr: ${familyError || "none"} · projectErr: ${projectError || "none"}`,
+                      variant: "info"
+                    });
+                    context.ui.toast.show({
+                      message: "Read: live $ > 0 but panel $0 = panel render frozen (host problem). Live 0 msgs or fetch FAILED = data path problem (this toast shows the reason).",
+                      variant: "info"
+                    });
+                  } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    context.ui.toast.show({
+                      message: `opencodebar doctor · session fetch FAILED: ${message}`,
+                      variant: "error"
+                    });
+                  }
+                }
+              }
             }
           ]
         }));
