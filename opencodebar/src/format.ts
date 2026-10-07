@@ -110,28 +110,6 @@ export function sparklineBlocks(days: readonly number[]): string {
 }
 
 /**
- * Compact footer age: "now", "38m", "2h", "1d" — formatAge's thresholds
- * without the verbose wording, sized for the crowded footer line.
- */
-export function compactAge(ageMs: number): string {
-  const ms = Math.max(0, ageMs)
-  if (ms < 60_000) return "now"
-  if (ms < 60 * 60_000) return `${Math.floor(ms / 60_000)}m`
-  if (ms < 24 * 60 * 60_000) return `${Math.floor(ms / (60 * 60_000))}h`
-  return `${Math.floor(ms / (24 * 60 * 60_000))}d`
-}
-
-/**
- * Footer line with the `· r<N>` reactivity heartbeat appended. The body is
- * trimmed with an ellipsis when needed; the heartbeat is never cut, so the
- * probe stays visible even for long price-status labels.
- */
-export function heartbeatFooter(body: string, revision: number, width: number = PANEL_WIDTH): string {
-  const heartbeat = ` · r${revision}`
-  return truncateWithEllipsis(body, width - heartbeat.length) + heartbeat
-}
-
-/**
  * Adaptive USD precision for money that spans orders of magnitude: 2 decimals
  * from $100, 3 from $1, 4 below. Keeps the value inside VALUE_WIDTH cells
  * without losing signal on cheap sessions.

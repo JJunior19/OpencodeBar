@@ -24,7 +24,7 @@
  *    Today $4.196 · saved $12.40
  *    7d ▇▄▁
  *   ! <project total error>…
- *   13 ses · prices 38m · r7
+ *   13 sessions total
  *
  * The header renders `OpencodeBar` as a bold span (OpenTUI `<b>`); its
  * natural width (26 cells) can exceed the value-column edge but stays inside
@@ -34,9 +34,10 @@
  * days stay readable next to a spike; the ` Today` line above it carries
  * today's spend plus the window's cache savings when positive. `!`/`! ctx:`
  * warning lines appear only while the matching async fetch is failing
- * (project value: "…" while loading, "!" while erroring). The `r<N>` footer
- * heartbeat is the reactivity probe: N is the controller revision and must
- * advance across 30s ticks — a frozen N means the signal graph is dead.
+ * (project value: "…" while loading, "!" while erroring). The footer shows
+ * the count of sessions scanned for the project window; while the price
+ * table has not loaded yet it reads "prices: loading", and price-fetch
+ * failures replace it with a warning line.
  * Row widths: every value row ends at valueEdge (per-model rows reach it via
  * 2+14+1+7+10 = 34 cells at the widest name width); subagent names pad or trim
  * to the same edge (top 4 by cost, positive only); the today line trims
@@ -52,10 +53,8 @@ import {
   PANEL_WIDTH,
   SHARE_ZONE_WIDTH,
   VALUE_WIDTH,
-  compactAge,
   fitLabel,
   formatUSDAdaptive,
-  heartbeatFooter,
   labelWidthToEdge,
   panelRow,
   sectionHeaderParts,
@@ -224,16 +223,13 @@ export function CostPanel(props: {
           when={prices().state === "error" || prices().state === "unavailable"}
           fallback={
             <text fg={props.theme.muted}>
-              {heartbeatFooter(
-                prices().state === "loading"
-                  ? prices().label
-                  : `${project().state === "ok" && project().sessionCount > 0 ? `${project().sessionCount} ses · ` : ""}prices ${compactAge(prices().ageMs)}`,
-                props.ctrl.revision(),
-              )}
+              {prices().state === "loading"
+                ? prices().label
+                : `${project().state === "ok" ? project().sessionCount : 0} sessions total`}
             </text>
           }
         >
-          <text fg={props.theme.warning}>{heartbeatFooter(prices().label, props.ctrl.revision())}</text>
+          <text fg={props.theme.warning}>{prices().label}</text>
         </Show>
       </box>
     </Show>

@@ -330,20 +330,6 @@ function sparklineBlocks(days) {
     return " ".repeat(days.length);
   return days.map((value) => value <= 0 ? " " : SPARK_RAMP[Math.round(Math.sqrt(value / max) * (SPARK_RAMP.length - 1))]).join("");
 }
-function compactAge(ageMs) {
-  const ms = Math.max(0, ageMs);
-  if (ms < 60000)
-    return "now";
-  if (ms < 60 * 60000)
-    return `${Math.floor(ms / 60000)}m`;
-  if (ms < 24 * 60 * 60000)
-    return `${Math.floor(ms / (60 * 60000))}h`;
-  return `${Math.floor(ms / (24 * 60 * 60000))}d`;
-}
-function heartbeatFooter(body, revision, width = PANEL_WIDTH) {
-  const heartbeat = ` · r${revision}`;
-  return truncateWithEllipsis(body, width - heartbeat.length) + heartbeat;
-}
 function formatUSDAdaptive(amount) {
   if (amount >= 100)
     return formatUSD(amount, 2);
@@ -508,11 +494,11 @@ function CostPanel(props) {
           when: prices().state === "error" || prices().state === "unavailable",
           fallback: /* @__PURE__ */ jsxDEV("text", {
             fg: props.theme.muted,
-            children: heartbeatFooter(prices().state === "loading" ? prices().label : `${project().state === "ok" && project().sessionCount > 0 ? `${project().sessionCount} ses · ` : ""}prices ${compactAge(prices().ageMs)}`, props.ctrl.revision())
+            children: prices().state === "loading" ? prices().label : `${project().state === "ok" ? project().sessionCount : 0} sessions total`
           }, undefined, false, undefined, this),
           children: /* @__PURE__ */ jsxDEV("text", {
             fg: props.theme.warning,
-            children: heartbeatFooter(prices().label, props.ctrl.revision())
+            children: prices().label
           }, undefined, false, undefined, this)
         }, undefined, false, undefined, this)
       ]

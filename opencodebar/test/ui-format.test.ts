@@ -6,10 +6,8 @@ import {
   SHARE_ZONE_WIDTH,
   VALUE_WIDTH,
   billedOutput,
-  compactAge,
   fitLabel,
   formatUSDAdaptive,
-  heartbeatFooter,
   labelWidthToEdge,
   panelRow,
   sectionHeader,
@@ -21,8 +19,6 @@ import {
   truncateWithEllipsis,
   valueEdge,
 } from "../src/format"
-
-const DAY_MS = 24 * 60 * 60 * 1000
 
 describe("fitLabel", () => {
   it("pads short labels to the target width", () => {
@@ -150,19 +146,6 @@ describe("sparklineBlocks (weekly timeline)", () => {
   })
 })
 
-describe("compactAge", () => {
-  it("mirrors formatAge thresholds without the verbose wording", () => {
-    expect(compactAge(0)).toBe("now")
-    expect(compactAge(59_000)).toBe("now")
-    expect(compactAge(60_000)).toBe("1m")
-    expect(compactAge(38 * 60_000)).toBe("38m")
-    expect(compactAge(90 * 60_000)).toBe("1h")
-    expect(compactAge(2 * 60 * 60_000)).toBe("2h")
-    expect(compactAge(25 * 60 * 60_000)).toBe("1d")
-    expect(compactAge(3 * DAY_MS)).toBe("3d")
-  })
-})
-
 describe("todayLine (project today row + savings)", () => {
   it("renders today's spend and positive savings", () => {
     // formatUSDAdaptive: $4.196 (4 decimals <$1), $12.400 (3 decimals >= $1)
@@ -224,18 +207,6 @@ describe("truncateWithEllipsis", () => {
     expect(line).toHaveLength(PANEL_WIDTH)
     expect(line.endsWith("…")).toBe(true)
     expect(truncateWithEllipsis("! boom", 1)).toBe("…")
-  })
-})
-
-describe("heartbeatFooter", () => {
-  it("appends the revision heartbeat to a fitting footer", () => {
-    expect(heartbeatFooter("38 sessions · prices: 2m old", 17)).toBe("38 sessions · prices: 2m old · r17")
-  })
-
-  it("trims the body, never the heartbeat, at the width limit", () => {
-    const line = heartbeatFooter("200 sessions · prices: just now", 1234)
-    expect(line).toHaveLength(PANEL_WIDTH)
-    expect(line.endsWith(" · r1234")).toBe(true)
   })
 })
 
