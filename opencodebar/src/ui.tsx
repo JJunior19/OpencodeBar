@@ -6,22 +6,25 @@
  * component below recomputes when the controller's signals change. String
  * builders live in ./format (JSX-free, unit-tested).
  *
- * Layout contract (compact, sidebar-safe, ≤ 34 columns):
- *   ── OpencodeBar · API est. ──
- *   Session           $12.3456
+ * Layout contract (compact, sidebar-safe, ≤ 34 columns). All money values
+ * share ONE right edge (`valueEdge` = indent + name + gap + share zone +
+ * value, 28–34 cells depending on the model-name width), so Session,
+ * per-model, subagent, and Project rows read as a single aligned column:
+ *   ── OpencodeBar · API est. ──────
+ *   Session                  $12.3456
  *    ↓ 250k · ↑ 60k · ↺ 9.5M
  *    ↺ saved $1.03
  *   ! ctx: <family fetch error>…
  *     glm-5.3        ▇▇  50%    $9.876
  *      ↓ 1.2M · ↑ 340k · ↺ 8.1M
- *    · subagents (2): $0.432
- *      explore-wor        $0.21
- *      cost-panel         $0.19
- *   Project · 7d          $45.67
+ *    · subagents (2):          $0.432
+ *      explore-wor             $0.21
+ *      cost-panel              $0.19
+ *   Project · 7d             $45.67
  *    Today $4.196 · saved $12.40
  *    7d ▇▄▁
  *   ! <project total error>…
- *   10 ses · prices 38m · r7
+ *   13 ses · prices 38m · r7
  *
  * The header renders `OpencodeBar` as a bold span (OpenTUI `<b>`); its
  * natural width (26 cells) can exceed the value-column edge but stays inside
@@ -34,8 +37,10 @@
  * (project value: "…" while loading, "!" while erroring). The `r<N>` footer
  * heartbeat is the reactivity probe: N is the controller revision and must
  * advance across 30s ticks — a frozen N means the signal graph is dead.
- * Row budgets: per-model 2+14+7+10 = 33 cells; subagent item 3+14+10 = 27
- * cells (top 4 by cost, positive only); the today line trims itself to 34.
+ * Row widths: every value row ends at valueEdge (per-model rows reach it via
+ * 2+14+1+7+10 = 34 cells at the widest name width); subagent names pad or trim
+ * to the same edge (top 4 by cost, positive only); the today line trims
+ * itself to 34.
  */
 import type { RGBA } from "@opentui/core"
 import { For, Show, createMemo } from "solid-js"
@@ -51,6 +56,7 @@ import {
   fitLabel,
   formatUSDAdaptive,
   heartbeatFooter,
+  labelWidthToEdge,
   panelRow,
   sectionHeaderParts,
   shareBar,
@@ -58,6 +64,7 @@ import {
   todayLine,
   tokenDetail,
   truncateWithEllipsis,
+  valueEdge,
 } from "./format"
 
 export interface PriceStatusView {
@@ -140,11 +147,11 @@ export function CostPanel(props: {
     return Math.min(NAME_MAX, Math.max(NAME_MIN, longest))
   })
 
-  const rowLabelWidth = createMemo(() => {
-    return Math.max("Project · 7d".length, DETENT + nameWidth())
-  })
+  // Single shared value column: model rows define the widest layout, every
+  // other row pads or trims its label so its value ends on the same column.
+  const edge = createMemo(() => valueEdge(nameWidth()))
 
-  const headerParts = createMemo(() => sectionHeaderParts(rowLabelWidth() + VALUE_WIDTH))
+  const headerParts = createMemo(() => sectionHeaderParts(edge()))
 
   const barContenders = createMemo(() => report().models.filter((model) => model.matched && model.usd > 0).length)
 
@@ -152,7 +159,7 @@ export function CostPanel(props: {
     <Show when={props.sessionID !== ""}>
       <box>
         <text fg={props.theme.text}>{headerParts()[0]}<b>{headerParts()[1]}</b>{headerParts()[2]}</text>
-        <text fg={props.theme.text}>{panelRow("Session", formatUSDAdaptive(report().total), rowLabelWidth())}</text>
+        <text fg={props.theme.text}>{panelRow("Session", formatUSDAdaptive(report().total), labelWidthToEdge(edge(), 0))}</text>
         <text fg={props.theme.muted}>{`${" ".repeat(DETENT + 1)}${tokenDetail(report().tokens)}`}</text>
         <Show when={report().cacheSaved > 0}>
           <text fg={props.theme.muted}>{`${" ".repeat(DETENT + 1)}↺ saved ${formatUSDAdaptive(report().cacheSaved)}`}</text>
@@ -170,12 +177,12 @@ export function CostPanel(props: {
                   when={model.matched}
                   fallback={
                     <text fg={props.theme.warning}>
-                      {`${" ".repeat(DETENT)}${fitLabel(name, nameWidth())}${bar}${"no price".padStart(VALUE_WIDTH)}`}
+                      {`${" ".repeat(DETENT)}${fitLabel(name, nameWidth())} ${bar}${"no price".padStart(VALUE_WIDTH)}`}
                     </text>
                   }
                 >
                   <text fg={props.theme.muted}>
-                    {`${" ".repeat(DETENT)}${fitLabel(name, nameWidth())}${bar}${formatUSDAdaptive(model.usd).padStart(VALUE_WIDTH)}`}
+                    {`${" ".repeat(DETENT)}${fitLabel(name, nameWidth())} ${bar}${formatUSDAdaptive(model.usd).padStart(VALUE_WIDTH)}`}
                   </text>
                 </Show>
                 <text fg={props.theme.muted}>{`${" ".repeat(DETENT + 1)}${tokenDetail(model.tokens)}`}</text>
@@ -186,12 +193,12 @@ export function CostPanel(props: {
         <Show when={report().subagents.count > 0}>
           <box>
             <text fg={props.theme.muted}>
-              {`${" ".repeat(DETENT)}· subagents (${report().subagents.count}): ${formatUSDAdaptive(report().subagents.total)}`}
+              {panelRow(`· subagents (${report().subagents.count}):`, formatUSDAdaptive(report().subagents.total), labelWidthToEdge(edge(), DETENT))}
             </text>
             <For each={report().subagents.items.filter((item) => item.usd > 0).slice(0, 4)}>
               {(item) => (
                 <text fg={props.theme.muted}>
-                  {`${" ".repeat(DETENT + 1)}${panelRow(item.name !== "" ? item.name : shortSessionID(item.sessionID), formatUSDAdaptive(item.usd), NAME_MAX)}`}
+                  {`${" ".repeat(DETENT + 1)}${panelRow(item.name !== "" ? item.name : shortSessionID(item.sessionID), formatUSDAdaptive(item.usd), labelWidthToEdge(edge(), DETENT + 1))}`}
                 </text>
               )}
             </For>
@@ -201,7 +208,7 @@ export function CostPanel(props: {
           {panelRow(
             "Project · 7d",
             project().state === "ok" ? formatUSD(project().total, 2) : project().state === "error" ? "!" : "…",
-            rowLabelWidth(),
+            labelWidthToEdge(edge(), 0),
           )}
         </text>
         <Show when={project().state === "ok" && project().total > 0}>

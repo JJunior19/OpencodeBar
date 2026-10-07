@@ -289,6 +289,12 @@ function fitLabel(label, width) {
 function panelRow(label, value, labelWidth) {
   return fitLabel(label, labelWidth) + value.padStart(VALUE_WIDTH);
 }
+function valueEdge(nameWidth) {
+  return DETENT + nameWidth + 1 + SHARE_ZONE_WIDTH + VALUE_WIDTH;
+}
+function labelWidthToEdge(edge, indent) {
+  return Math.max(1, edge - indent - VALUE_WIDTH);
+}
 function sectionHeader(title, width) {
   const text = ` ${title} `;
   const right = Math.max(0, width - text.length - 2);
@@ -389,10 +395,8 @@ function CostPanel(props) {
     const longest = report().models.reduce((max, model) => Math.max(max, shortModelName(model.modelID).length), 0);
     return Math.min(NAME_MAX, Math.max(NAME_MIN, longest));
   });
-  const rowLabelWidth = createMemo(() => {
-    return Math.max("Project · 7d".length, DETENT + nameWidth());
-  });
-  const headerParts = createMemo(() => sectionHeaderParts(rowLabelWidth() + VALUE_WIDTH));
+  const edge = createMemo(() => valueEdge(nameWidth()));
+  const headerParts = createMemo(() => sectionHeaderParts(edge()));
   const barContenders = createMemo(() => report().models.filter((model) => model.matched && model.usd > 0).length);
   return /* @__PURE__ */ jsxDEV(Show, {
     when: props.sessionID !== "",
@@ -410,7 +414,7 @@ function CostPanel(props) {
         }, undefined, true, undefined, this),
         /* @__PURE__ */ jsxDEV("text", {
           fg: props.theme.text,
-          children: panelRow("Session", formatUSDAdaptive(report().total), rowLabelWidth())
+          children: panelRow("Session", formatUSDAdaptive(report().total), labelWidthToEdge(edge(), 0))
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV("text", {
           fg: props.theme.muted,
@@ -441,11 +445,11 @@ function CostPanel(props) {
                   when: model.matched,
                   fallback: /* @__PURE__ */ jsxDEV("text", {
                     fg: props.theme.warning,
-                    children: `${" ".repeat(DETENT)}${fitLabel(name, nameWidth())}${bar}${"no price".padStart(VALUE_WIDTH)}`
+                    children: `${" ".repeat(DETENT)}${fitLabel(name, nameWidth())} ${bar}${"no price".padStart(VALUE_WIDTH)}`
                   }, undefined, false, undefined, this),
                   children: /* @__PURE__ */ jsxDEV("text", {
                     fg: props.theme.muted,
-                    children: `${" ".repeat(DETENT)}${fitLabel(name, nameWidth())}${bar}${formatUSDAdaptive(model.usd).padStart(VALUE_WIDTH)}`
+                    children: `${" ".repeat(DETENT)}${fitLabel(name, nameWidth())} ${bar}${formatUSDAdaptive(model.usd).padStart(VALUE_WIDTH)}`
                   }, undefined, false, undefined, this)
                 }, undefined, false, undefined, this),
                 /* @__PURE__ */ jsxDEV("text", {
@@ -462,13 +466,13 @@ function CostPanel(props) {
             children: [
               /* @__PURE__ */ jsxDEV("text", {
                 fg: props.theme.muted,
-                children: `${" ".repeat(DETENT)}· subagents (${report().subagents.count}): ${formatUSDAdaptive(report().subagents.total)}`
+                children: panelRow(`· subagents (${report().subagents.count}):`, formatUSDAdaptive(report().subagents.total), labelWidthToEdge(edge(), DETENT))
               }, undefined, false, undefined, this),
               /* @__PURE__ */ jsxDEV(For, {
                 each: report().subagents.items.filter((item) => item.usd > 0).slice(0, 4),
                 children: (item) => /* @__PURE__ */ jsxDEV("text", {
                   fg: props.theme.muted,
-                  children: `${" ".repeat(DETENT + 1)}${panelRow(item.name !== "" ? item.name : shortSessionID(item.sessionID), formatUSDAdaptive(item.usd), NAME_MAX)}`
+                  children: `${" ".repeat(DETENT + 1)}${panelRow(item.name !== "" ? item.name : shortSessionID(item.sessionID), formatUSDAdaptive(item.usd), labelWidthToEdge(edge(), DETENT + 1))}`
                 }, undefined, false, undefined, this)
               }, undefined, false, undefined, this)
             ]
@@ -476,7 +480,7 @@ function CostPanel(props) {
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV("text", {
           fg: props.theme.text,
-          children: panelRow("Project · 7d", project().state === "ok" ? formatUSD(project().total, 2) : project().state === "error" ? "!" : "…", rowLabelWidth())
+          children: panelRow("Project · 7d", project().state === "ok" ? formatUSD(project().total, 2) : project().state === "error" ? "!" : "…", labelWidthToEdge(edge(), 0))
         }, undefined, false, undefined, this),
         /* @__PURE__ */ jsxDEV(Show, {
           when: project().state === "ok" && project().total > 0,

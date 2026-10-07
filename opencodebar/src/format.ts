@@ -27,6 +27,21 @@ export function panelRow(label: string, value: string, labelWidth: number): stri
   return fitLabel(label, labelWidth) + value.padStart(VALUE_WIDTH)
 }
 
+/**
+ * Shared right edge for every money value: model rows are the widest layout
+ * (indent + name + one gap + share zone + value), and every other row pads or
+ * trims its label so its value ends on that same column. One edge, no ragged
+ * right margin across row types.
+ */
+export function valueEdge(nameWidth: number): number {
+  return DETENT + nameWidth + 1 + SHARE_ZONE_WIDTH + VALUE_WIDTH
+}
+
+/** Label width that right-aligns a panelRow value at `edge` on a row indented `indent` cells. */
+export function labelWidthToEdge(edge: number, indent: number): number {
+  return Math.max(1, edge - indent - VALUE_WIDTH)
+}
+
 /** Section header like `── Cost · API est. ────────` padded to `width`. */
 export function sectionHeader(title: string, width: number): string {
   const text = ` ${title} `

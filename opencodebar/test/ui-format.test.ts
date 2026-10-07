@@ -10,6 +10,7 @@ import {
   fitLabel,
   formatUSDAdaptive,
   heartbeatFooter,
+  labelWidthToEdge,
   panelRow,
   sectionHeader,
   sectionHeaderParts,
@@ -18,6 +19,7 @@ import {
   todayLine,
   tokenDetail,
   truncateWithEllipsis,
+  valueEdge,
 } from "../src/format"
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -43,6 +45,34 @@ describe("panelRow", () => {
     const row = panelRow("Session", "$1.50", 8)
     expect(row).toBe("Session      $1.50")
     expect(row.length).toBe(8 + 10)
+  })
+})
+
+describe("valueEdge (single shared value column)", () => {
+  it("matches the per-model row width: indent + name + gap + share zone + value", () => {
+    expect(valueEdge(13)).toBe(DETENT + 13 + 1 + SHARE_ZONE_WIDTH + VALUE_WIDTH)
+    expect(valueEdge(NAME_MAX)).toBe(34)
+    expect(valueEdge(8)).toBe(28)
+  })
+
+  it("right-aligns every row type on the same edge", () => {
+    const edge = valueEdge(13)
+    const session = panelRow("Session", "$0.3560", labelWidthToEdge(edge, 0))
+    const project = panelRow("Project · 7d", "$26.41", labelWidthToEdge(edge, 0))
+    const subagent = " ".repeat(DETENT + 1) + panelRow("explore-wor", "$0.21", labelWidthToEdge(edge, DETENT + 1))
+    const model =
+      " ".repeat(DETENT) + fitLabel("glm-5.3", 13) + " " + shareBar(9.876, 12, 2).padEnd(SHARE_ZONE_WIDTH) + "$9.876".padStart(VALUE_WIDTH)
+    for (const row of [session, project, subagent, model]) {
+      expect(row.length).toBe(edge)
+    }
+    expect(session.endsWith("$0.3560")).toBe(true)
+    expect(project.endsWith("$26.41")).toBe(true)
+    expect(subagent.endsWith("$0.21")).toBe(true)
+    expect(model.endsWith("$9.876")).toBe(true)
+  })
+
+  it("never returns a label width below one cell", () => {
+    expect(labelWidthToEdge(5, 0)).toBe(1)
   })
 })
 
