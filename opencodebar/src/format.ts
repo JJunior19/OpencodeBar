@@ -27,6 +27,21 @@ export function panelRow(label: string, value: string, labelWidth: number): stri
   return fitLabel(label, labelWidth) + value.padStart(VALUE_WIDTH)
 }
 
+/**
+ * Shared right edge for every money value: model rows are the widest layout
+ * (indent + name + one gap + share zone + value), and every other row pads or
+ * trims its label so its value ends on that same column. One edge, no ragged
+ * right margin across row types.
+ */
+export function valueEdge(nameWidth: number): number {
+  return DETENT + nameWidth + 1 + SHARE_ZONE_WIDTH + VALUE_WIDTH
+}
+
+/** Label width that right-aligns a panelRow value at `edge` on a row indented `indent` cells. */
+export function labelWidthToEdge(edge: number, indent: number): number {
+  return Math.max(1, edge - indent - VALUE_WIDTH)
+}
+
 /** Section header like `── Cost · API est. ────────` padded to `width`. */
 export function sectionHeader(title: string, width: number): string {
   const text = ` ${title} `
@@ -92,28 +107,6 @@ export function sparklineBlocks(days: readonly number[]): string {
   return days
     .map((value) => (value <= 0 ? " " : SPARK_RAMP[Math.round(Math.sqrt(value / max) * (SPARK_RAMP.length - 1))]))
     .join("")
-}
-
-/**
- * Compact footer age: "now", "38m", "2h", "1d" — formatAge's thresholds
- * without the verbose wording, sized for the crowded footer line.
- */
-export function compactAge(ageMs: number): string {
-  const ms = Math.max(0, ageMs)
-  if (ms < 60_000) return "now"
-  if (ms < 60 * 60_000) return `${Math.floor(ms / 60_000)}m`
-  if (ms < 24 * 60 * 60_000) return `${Math.floor(ms / (60 * 60_000))}h`
-  return `${Math.floor(ms / (24 * 60 * 60_000))}d`
-}
-
-/**
- * Footer line with the `· r<N>` reactivity heartbeat appended. The body is
- * trimmed with an ellipsis when needed; the heartbeat is never cut, so the
- * probe stays visible even for long price-status labels.
- */
-export function heartbeatFooter(body: string, revision: number, width: number = PANEL_WIDTH): string {
-  const heartbeat = ` · r${revision}`
-  return truncateWithEllipsis(body, width - heartbeat.length) + heartbeat
 }
 
 /**
