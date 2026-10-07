@@ -432,6 +432,8 @@ export default Plugin.define({
               // Doctor: imperative diagnosis that never touches the reactive
               // render path. A frozen panel cannot update itself, so every
               // finding goes out through toasts (host UI, not the slot).
+              // Hosts show one toast at a time (the last show wins), so the
+              // whole diagnosis is ONE self-contained message with a verdict.
               id: "opencodebar.doctor",
               title: "opencodebar: doctor (diagnose panel)",
               group: "opencodebar",
@@ -444,19 +446,12 @@ export default Plugin.define({
                 }
                 const entryCount = Object.keys(prices.entries).length
                 const pricePart =
-                  entryCount === 0
-                    ? "prices: none"
-                    : `prices: ${entryCount} models, ${formatAge(Date.now() - prices.fetchedAt)}`
-                context.ui.toast.show({
-                  message: `opencodebar doctor · ${pricePart} · revision ${revision()}`,
-                  variant: "info",
-                })
+                  entryCount === 0 ? "prices: none" : `prices ${entryCount} models ${formatAge(Date.now() - prices.fetchedAt)}`
 
+                let verdict: string
+                let variant: "info" | "error" = "info"
                 if (viewedSessionID === "") {
-                  context.ui.toast.show({
-                    message: "opencodebar doctor · session: none viewed yet (open the panel first)",
-                    variant: "info",
-                  })
+                  verdict = "no session viewed yet (open the panel first)"
                 } else {
                   try {
                     const messages = await context.client.session.context({ sessionID: viewedSessionID })
@@ -470,27 +465,23 @@ export default Plugin.define({
                       (sum, usage) => sum + computeTokenCost(usage.tokens, lookup(usage.model.providerID, usage.model.id)),
                       0,
                     )
-                    context.ui.toast.show({
-                      message: `opencodebar doctor · session ${viewedSessionID.slice(0, 8)}: ${messages.length} msgs, ${billed.length} with tokens, $${total.toFixed(4)} (live fetch)`,
-                      variant: "success",
-                    })
-                    context.ui.toast.show({
-                      message: `opencodebar doctor · panel cache: ${familyUsages.get(viewedSessionID)?.usages.length ?? 0} usages · familyErr: ${familyError || "none"} · projectErr: ${projectError || "none"}`,
-                      variant: "info",
-                    })
-                    context.ui.toast.show({
-                      message:
-                        "Read: live $ > 0 but panel $0 = panel render frozen (host problem). Live 0 msgs or fetch FAILED = data path problem (this toast shows the reason).",
-                      variant: "info",
-                    })
+                    const cached = familyUsages.get(viewedSessionID)?.usages.length ?? 0
+                    if (billed.length === 0) {
+                      verdict = `DATA: session ${viewedSessionID.slice(0, 8)} has ${messages.length} msgs, none with tokens`
+                    } else if (cached > 0) {
+                      verdict = `live $${total.toFixed(4)} over ${billed.length} billed msgs, cache has ${cached} usages — if the panel still shows $0, the render is frozen (restart the client)`
+                    } else {
+                      verdict = `PANEL FETCH STUCK: live $${total.toFixed(4)} works but the panel cache is empty · familyErr ${familyError || "none"}`
+                    }
                   } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error)
-                    context.ui.toast.show({
-                      message: `opencodebar doctor · session fetch FAILED: ${message}`,
-                      variant: "error",
-                    })
+                    variant = "error"
+                    verdict = `DATA FETCH FAILED: ${error instanceof Error ? error.message : String(error)}`
                   }
                 }
+                context.ui.toast.show({
+                  message: `opencodebar doctor · ${pricePart} · rev ${revision()} · ${verdict}`,
+                  variant,
+                })
               },
             },
           ],
